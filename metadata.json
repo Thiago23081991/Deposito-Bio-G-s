@@ -1,6 +1,6 @@
 {
-  "name": "Bio Gás Express - Gestão de Entregas",
-  "description": "Um sistema completo e responsivo para gestão de pedidos de gás, com busca de clientes por telefone, cálculo automático de valores e integração com Google Sheets.",
+  "name": "Bio Gás PRO - Gestão Inteligente",
+  "description": "Sistema de gestão de pedidos de gás com automação de rotas via WhatsApp e baixa manual de pagamentos.",
   "requestFramePermissions": [
     "geolocation"
   ]

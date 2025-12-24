@@ -71,3 +71,9 @@ export enum PaymentMethod {
   CARTAO_DEBITO = 'Cartão de Débito',
   A_RECEBER = 'A Receber'
 }
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  links?: { title: string; uri: string }[];
+}

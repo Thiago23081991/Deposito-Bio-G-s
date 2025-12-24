@@ -25,8 +25,7 @@ let mockProdutos: Produto[] = [
 ];
 
 let mockEntregadores: Entregador[] = [
-  { id: 'E1', nome: 'Carlos Moto', telefone: '11988887777', status: 'Ativo', veiculo: 'CG 160 Preta' },
-  { id: 'E2', nome: 'Marcos Entrega', telefone: '11977776666', status: 'Ativo', veiculo: 'Factor 150 Azul' }
+  { id: 'E1', nome: 'Carlos Moto', telefone: '11988887777', status: 'Ativo', veiculo: 'CG 160 Preta' }
 ];
 
 let mockPedidos: Pedido[] = [];
@@ -35,57 +34,19 @@ let mockFinanceiro: Movimentacao[] = [];
 export const gasService = {
   listarClientes: async () => { try { return await callGAS('listarClientes'); } catch { return [...mockClientes]; } },
   buscarClientePorTelefone: async (t: string) => { try { return await callGAS('buscarClientePorTelefone', t); } catch { return mockClientes.find(c => c.telefone.includes(t)) || null; } },
-  salvarCliente: async (c: Partial<Cliente>) => { 
-    try { return await callGAS('salvarCliente', c); } 
-    catch { 
-      if (c.id) {
-        const idx = mockClientes.findIndex(cli => cli.id === c.id);
-        if (idx !== -1) mockClientes[idx] = { ...mockClientes[idx], ...c } as Cliente;
-      } else {
-        mockClientes.unshift({ ...c, id: `CLI-${Date.now()}`, dataCadastro: new Date().toLocaleDateString() } as Cliente);
-      }
-      return { success: true }; 
-    } 
-  },
-  excluirCliente: async (id: string) => { try { return await callGAS('excluirCliente', id); } catch { mockClientes = mockClientes.filter(c => c.id !== id); return { success: true }; } },
   
   listarProdutos: async () => { try { return await callGAS('listarProdutos'); } catch { return [...mockProdutos]; } },
-  salvarProduto: async (p: Partial<Produto>) => { 
-    try { return await callGAS('salvarProduto', p); } 
-    catch { 
-      if (p.id) {
-        const idx = mockProdutos.findIndex(prod => prod.id === p.id);
-        if (idx !== -1) mockProdutos[idx] = { ...mockProdutos[idx], ...p } as Produto;
-      } else {
-        mockProdutos.push({ ...p, id: `PROD-${Date.now()}` } as Produto);
-      }
-      return { success: true }; 
-    } 
-  },
-  
   listarEntregadores: async () => { try { return await callGAS('listarEntregadores'); } catch { return [...mockEntregadores]; } },
-  salvarEntregador: async (e: Partial<Entregador>) => { 
-    try { return await callGAS('salvarEntregador', e); } 
-    catch { 
-      if (e.id) {
-        const idx = mockEntregadores.findIndex(ent => ent.id === e.id);
-        if (idx !== -1) mockEntregadores[idx] = { ...mockEntregadores[idx], ...e } as Entregador;
-      } else {
-        mockEntregadores.push({ ...e, id: `ENT-${Date.now()}` } as Entregador);
-      }
-      return { success: true }; 
-    } 
-  },
-  excluirEntregador: async (id: string) => { try { return await callGAS('excluirEntregador', id); } catch { mockEntregadores = mockEntregadores.filter(e => e.id !== id); return { success: true }; } },
   
   salvarPedido: async (d: any) => { 
     try { return await callGAS('salvarPedido', d); } 
     catch { 
       const id = `PED-${Math.floor(Math.random()*10000)}`;
-      mockPedidos.unshift({ ...d, id, status: 'Pendente', dataHora: new Date().toLocaleString() });
+      mockPedidos.unshift({ ...d, id, status: 'Pendente', dataHora: new Date().toLocaleTimeString() });
       return { success: true, id }; 
     } 
   },
+  
   atualizarStatusPedido: async (id: string, s: string) => { 
     try { return await callGAS('atualizarStatusPedido', id, s); } 
     catch { 
@@ -96,11 +57,11 @@ export const gasService = {
           const isAReceber = p.formaPagamento === 'A Receber';
           mockFinanceiro.unshift({ 
             id: `FIN-${Date.now()}`, 
-            dataHora: new Date().toLocaleString(), 
+            dataHora: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(), 
             tipo: isAReceber ? 'A Receber' : 'Entrada', 
-            descricao: `Venda: ${p.nomeCliente}`, 
-            valor: p.valorTotal, 
-            categoria: isAReceber ? 'Venda Fiada' : 'Venda', 
+            descricao: `Venda Finalizada: ${p.nomeCliente}`, 
+            valor: Number(p.valorTotal), 
+            categoria: isAReceber ? 'Venda Fiada' : 'Venda Direta', 
             metodo: p.formaPagamento 
           });
         }
@@ -108,27 +69,7 @@ export const gasService = {
       return { success: true }; 
     } 
   },
-  baixarPagamento: async (id: string, metodo: string) => {
-    try { return await callGAS('baixarPagamento', id, metodo); }
-    catch {
-      const idx = mockFinanceiro.findIndex(m => m.id === id);
-      if (idx !== -1) {
-        const pendente = mockFinanceiro[idx];
-        // Adiciona a entrada real
-        mockFinanceiro.unshift({
-          ...pendente,
-          id: `FIN-BAIXA-${Date.now()}`,
-          tipo: 'Entrada',
-          descricao: `[BAIXA] ${pendente.descricao}`,
-          metodo: metodo,
-          dataHora: new Date().toLocaleString()
-        });
-        // Marca o antigo como liquidado para sumir da lista de cobrança
-        mockFinanceiro[idx].tipo = 'Liquidado';
-      }
-      return { success: true };
-    }
-  },
+  
   getResumoFinanceiro: async () => { 
     try { return await callGAS('getResumoFinanceiro'); } 
     catch { 
@@ -148,40 +89,6 @@ export const gasService = {
       }; 
     } 
   },
-  listarUltimosPedidos: async () => { try { return await callGAS('listarUltimosPedidos'); } catch { return mockPedidos.slice(0, 15); } },
-  registrarMovimentacao: async (d: any) => { 
-    try { return await callGAS('registrarMovimentacao', d.tipo, d.valor, d.descricao, d.categoria, d.metodo); } 
-    catch { 
-      mockFinanceiro.unshift({
-        id: `FIN-${Date.now()}`,
-        dataHora: new Date().toLocaleString(),
-        tipo: d.tipo,
-        descricao: d.descricao,
-        valor: d.valor,
-        categoria: d.categoria,
-        metodo: d.metodo
-      });
-      return { success: true }; 
-    } 
-  },
-  salvarClientesEmMassa: async (lista: any[]) => { 
-    try { 
-      return await callGAS('salvarClientesEmMassa', lista); 
-    } catch { 
-      let count = 0;
-      lista.forEach(novo => {
-        const telLimpo = String(novo.telefone).replace(/\D/g, '');
-        if (!mockClientes.find(c => c.telefone === telLimpo)) {
-          mockClientes.unshift({
-            ...novo,
-            id: `CLI-${Date.now()}-${count}`,
-            telefone: telLimpo,
-            dataCadastro: new Date().toLocaleDateString()
-          } as Cliente);
-          count++;
-        }
-      });
-      return { success: true, count }; 
-    } 
-  },
+  
+  listarUltimosPedidos: async () => { try { return await callGAS('listarUltimosPedidos'); } catch { return mockPedidos.slice(0, 30); } },
 };
