@@ -1,5 +1,5 @@
 
-import { Cliente, Produto, Entregador, Pedido, ResumoFinanceiro, Movimentacao, PedidoItem } from '../types';
+import { Cliente, Produto, Entregador, Pedido, ResumoFinanceiro, Movimentacao, PedidoItem } from '../types.ts';
 
 // Função auxiliar para chamar o Google Apps Script se disponível
 const callGAS = async (functionName: string, ...args: any[]): Promise<any> => {
@@ -117,7 +117,6 @@ export const gasService = {
       return { success: true };
     }
   },
-  // Fix: Added the missing excluirEntregador method to allow removing delivery personnel records
   excluirEntregador: async (id: string) => {
     try { return await callGAS('excluirEntregador', id); }
     catch {
