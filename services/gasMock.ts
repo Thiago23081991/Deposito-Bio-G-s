@@ -20,8 +20,8 @@ let mockClientes: Cliente[] = [
 ];
 
 let mockProdutos: Produto[] = [
-  { id: 'P13', nome: 'Gás P13 (Cozinha)', preco: 110, estoque: 50 },
-  { id: 'A20', nome: 'Água 20L', preco: 15, estoque: 100 }
+  { id: 'P13', nome: 'Gás P13 (Cozinha)', preco: 110, estoque: 50, unidadeMedida: 'unidade', precoCusto: 85.50 },
+  { id: 'A20', nome: 'Água 20L', preco: 15, estoque: 100, unidadeMedida: 'unidade', precoCusto: 8.00 }
 ];
 
 let mockEntregadores: Entregador[] = [
@@ -34,13 +34,30 @@ let mockFinanceiro: Movimentacao[] = [];
 export const gasService = {
   listarClientes: async () => { try { return await callGAS('listarClientes'); } catch { return [...mockClientes]; } },
   
+  importarClientesEmMassa: async (clientes: any[]) => {
+    try { return await callGAS('importarClientesEmMassa', clientes); }
+    catch {
+      clientes.forEach(c => {
+        mockClientes.push({
+          ...c,
+          id: c.id || "CRM-" + Math.floor(Math.random() * 100000),
+          dataCadastro: new Date().toLocaleDateString()
+        });
+      });
+      return { success: true, count: clientes.length };
+    }
+  },
+
   listarProdutos: async () => { try { return await callGAS('listarProdutos'); } catch { return [...mockProdutos]; } },
   salvarProduto: async (p: any) => {
     try { return await callGAS('salvarProduto', p); }
     catch {
       const idx = mockProdutos.findIndex(item => item.id === p.id);
-      if(idx !== -1) mockProdutos[idx] = p;
-      else mockProdutos.push({...p, id: "PRD-"+Date.now()});
+      if(idx !== -1) {
+        mockProdutos[idx] = { ...mockProdutos[idx], ...p };
+      } else {
+        mockProdutos.push({...p, id: p.id || "PRD-"+Date.now()});
+      }
       return { success: true };
     }
   },
@@ -67,6 +84,16 @@ export const gasService = {
 
   listarEntregadores: async () => { try { return await callGAS('listarEntregadores'); } catch { return [...mockEntregadores]; } },
   
+  salvarEntregador: async (e: any) => {
+    try { return await callGAS('salvarEntregador', e); }
+    catch {
+      const idx = mockEntregadores.findIndex(item => item.id === e.id);
+      if(idx !== -1) mockEntregadores[idx] = e;
+      else mockEntregadores.push({...e, id: "ENT-"+Date.now(), status: 'Ativo'});
+      return { success: true };
+    }
+  },
+
   salvarPedido: async (d: any) => { 
     try { return await callGAS('salvarPedido', d); } 
     catch { 
@@ -101,6 +128,22 @@ export const gasService = {
         }
       });
       return { success: true, count: ids.length };
+    }
+  },
+
+  registrarMovimentacao: async (tipo: string, valor: number, descricao: string, categoria: string, metodo: string) => {
+    try { return await callGAS('registrarMovimentacao', tipo, valor, descricao, categoria, metodo); }
+    catch {
+      mockFinanceiro.unshift({
+        id: `FIN-${Date.now()}`,
+        dataHora: new Date().toLocaleString(),
+        tipo: tipo as any,
+        descricao,
+        valor,
+        categoria,
+        metodo
+      });
+      return { success: true };
     }
   },
   

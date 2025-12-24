@@ -1,7 +1,7 @@
 
 /**
- * SISTEMA BIO GÁS PRO - BACKEND V7.5
- * Gestão de Cobrança, Estoque e Ações em Massa
+ * SISTEMA BIO GÁS PRO - BACKEND V8.2
+ * Gestão de Cobrança, Equipe, Lançamentos e Importação
  */
 
 const SPREADSHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
@@ -20,7 +20,7 @@ function getSheet(name) {
     sheet = ss.insertSheet(name);
     const headers = {
       'Clientes': ['ID', 'Telefone', 'Nome', 'Endereço', 'Bairro', 'Referência', 'Data_Cadastro'],
-      'Produtos': ['ID', 'Nome_Produto', 'Preço', 'Estoque_Cheio'],
+      'Produtos': ['ID', 'Nome_Produto', 'Preço', 'Estoque_Cheio', 'Unidade_Medida', 'Preco_Custo'],
       'Entregadores': ['ID', 'Nome', 'Status', 'Telefone', 'Veiculo'],
       'Pedidos': ['ID_Pedido', 'Data_Hora', 'Nome_Cliente', 'Telefone_Cliente', 'Endereço', 'Itens_JSON', 'Valor_Total', 'Entregador', 'Status', 'Forma_Pagamento'],
       'Financeiro': ['ID', 'Data_Hora', 'Tipo', 'Descrição', 'Valor', 'Categoria', 'Metodo']
@@ -30,7 +30,49 @@ function getSheet(name) {
   return sheet;
 }
 
-// --- AÇÕES EM MASSA (NOVO) ---
+// --- IMPORTAÇÃO EM MASSA ---
+function importarClientesEmMassa(clientes) {
+  const sheet = getSheet('Clientes');
+  const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy");
+  
+  const rows = clientes.map(c => [
+    c.id || "CRM-" + Math.floor(Math.random() * 100000),
+    String(c.telefone || ""),
+    c.nome || "",
+    c.endereco || "",
+    c.bairro || "",
+    c.referencia || "",
+    timestamp
+  ]);
+  
+  if (rows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
+  }
+  
+  return { success: true, count: rows.length };
+}
+
+// --- GESTÃO DE ENTREGADORES ---
+function salvarEntregador(e) {
+  const sheet = getSheet('Entregadores');
+  const data = sheet.getDataRange().getValues();
+  let row = -1;
+  for(let i=1; i<data.length; i++) {
+    if(String(data[i][0]) === String(e.id)) {
+      row = i + 1;
+      break;
+    }
+  }
+  if(row !== -1) {
+    sheet.getRange(row, 2, 1, 4).setValues([[e.nome, e.status, e.telefone, e.veiculo]]);
+  } else {
+    const newId = e.id || "ENT-" + Math.floor(Math.random() * 9000);
+    sheet.appendRow([newId, e.nome, e.status || 'Ativo', e.telefone, e.veiculo]);
+  }
+  return { success: true };
+}
+
+// --- AÇÕES EM MASSA ---
 function atualizarStatusPedidosEmMassa(ids, novoStatus) {
   const sheet = getSheet('Pedidos');
   const data = sheet.getDataRange().getValues();
@@ -40,8 +82,6 @@ function atualizarStatusPedidosEmMassa(ids, novoStatus) {
   for (let i = 1; i < data.length; i++) {
     if (idsStr.includes(String(data[i][0]))) {
       sheet.getRange(i + 1, 9).setValue(novoStatus);
-      
-      // Se for entrega, registra no financeiro
       if (novoStatus === 'Entregue') {
         const valor = Number(data[i][6]);
         const cliente = data[i][2];
@@ -64,32 +104,12 @@ function liquidarDivida(financeiroId) {
     if (String(data[i][0]) === String(financeiroId)) {
       sheet.getRange(i + 1, 3).setValue('Liquidado');
       const valor = data[i][4];
-      const desc = "Recebimento: " + data[i][3].replace("Venda Finalizada: ", "");
-      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', 'DINHEIRO/PIX');
+      const desc = "Recebimento Fiado: " + data[i][3].replace("Venda Finalizada: ", "");
+      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', 'BAIXA MANUAL');
       return { success: true };
     }
   }
   return { success: false };
-}
-
-// --- GESTÃO DE PRODUTOS ---
-function salvarProduto(p) {
-  const sheet = getSheet('Produtos');
-  const data = sheet.getDataRange().getValues();
-  let row = -1;
-  for(let i=1; i<data.length; i++) {
-    if(String(data[i][0]) === String(p.id)) {
-      row = i + 1;
-      break;
-    }
-  }
-  if(row !== -1) {
-    sheet.getRange(row, 2, 1, 3).setValues([[p.nome, Number(p.preco), Number(p.estoque)]]);
-  } else {
-    const newId = p.id || "PRD-" + Math.floor(Math.random() * 9000);
-    sheet.appendRow([newId, p.nome, Number(p.preco), Number(p.estoque)]);
-  }
-  return { success: true };
 }
 
 // --- SERVIÇOS FINANCEIROS ---
@@ -110,7 +130,6 @@ function getResumoFinanceiro() {
       if (tipo === 'Entrada') ent += valor;
       else if (tipo === 'Saída') sai += valor;
       else if (tipo === 'A Receber') arec += valor;
-      
       recentes.push({
         id: data[i][0], dataHora: data[i][1], tipo: tipo,
         descricao: data[i][3], valor: valor, categoria: data[i][5], metodo: data[i][6]
@@ -120,13 +139,32 @@ function getResumoFinanceiro() {
   return { totalEntradas: ent, totalSaidas: sai, totalAReceber: arec, saldo: ent - sai, recentes: recentes.reverse() };
 }
 
+// --- GESTÃO DE PRODUTOS ---
+function salvarProduto(p) {
+  const sheet = getSheet('Produtos');
+  const data = sheet.getDataRange().getValues();
+  let row = -1;
+  for(let i=1; i<data.length; i++) {
+    if(String(data[i][0]) === String(p.id)) {
+      row = i + 1;
+      break;
+    }
+  }
+  if(row !== -1) {
+    sheet.getRange(row, 2, 1, 5).setValues([[p.nome, Number(p.preco), Number(p.estoque), p.unidadeMedida, Number(p.precoCusto)]]);
+  } else {
+    const newId = p.id || "PRD-" + Math.floor(Math.random() * 9000);
+    sheet.appendRow([newId, p.nome, Number(p.preco), Number(p.estoque), p.unidadeMedida, Number(p.precoCusto)]);
+  }
+  return { success: true };
+}
+
 // --- GESTÃO DE PEDIDOS ---
 function salvarPedido(dados) {
   const sheet = getSheet('Pedidos');
   const id = "PED-" + Math.floor(Math.random() * 90000 + 10000);
   const items = dados.itens.map(it => `${it.qtd}x ${it.nome}`).join(", ");
   const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy HH:mm");
-  
   sheet.appendRow([id, timestamp, dados.nomeCliente, dados.telefoneCliente, dados.endereco, items, Number(dados.valorTotal), dados.entregador, 'Pendente', dados.formaPagamento]);
   
   const sheetProdutos = getSheet('Produtos');
@@ -140,10 +178,6 @@ function salvarPedido(dados) {
     }
   });
   return { success: true, id };
-}
-
-function atualizarStatusPedido(id, status) {
-  return atualizarStatusPedidosEmMassa([id], status);
 }
 
 function listarUltimosPedidos() {
@@ -163,7 +197,7 @@ function listarClientes() {
 
 function listarProdutos() {
   const data = getSheet('Produtos').getDataRange().getValues();
-  return data.length <= 1 ? [] : data.slice(1).map(r => ({ id: r[0], nome: r[1], preco: Number(r[2]), estoque: Number(r[3]) }));
+  return data.length <= 1 ? [] : data.slice(1).map(r => ({ id: r[0], nome: r[1], preco: Number(r[2]), estoque: Number(r[3]), unidadeMedida: r[4] || 'unidade', precoCusto: Number(r[5] || 0) }));
 }
 
 function listarEntregadores() {

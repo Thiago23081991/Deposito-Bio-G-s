@@ -14,6 +14,8 @@ export interface Produto {
   nome: string;
   preco: number;
   estoque: number;
+  unidadeMedida: string;
+  precoCusto: number;
 }
 
 export interface Entregador {
