@@ -46,7 +46,7 @@ function salvarClientesEmMassa(lista) {
     if (!existingTels.has(cleanTel)) {
       const id = "CLI-" + Math.floor(Math.random() * 90000 + 10000);
       rowsToAdd.push([id, cleanTel, dados.nome, dados.endereco, dados.bairro || '', dados.referencia || '', dataCad]);
-      existingTels.add(cleanTel); // Evitar duplicados dentro do próprio lote
+      existingTels.add(cleanTel); 
     }
   });
 
@@ -54,17 +54,6 @@ function salvarClientesEmMassa(lista) {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, 7).setValues(rowsToAdd);
   }
   return { success: true, count: rowsToAdd.length };
-}
-
-function buscarClientePorTelefone(telefone) {
-  const data = getSheet('Clientes').getDataRange().getValues();
-  const cleanTel = String(telefone).replace(/\D/g, '');
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][1]).replace(/\D/g, '') === cleanTel) {
-      return { id: data[i][0], telefone: String(data[i][1]), nome: data[i][2], endereco: data[i][3], bairro: data[i][4], referencia: data[i][5] };
-    }
-  }
-  return null;
 }
 
 function salvarCliente(dados) {
@@ -156,18 +145,6 @@ function salvarEntregador(dados) {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
-function excluirEntregador(id) {
-  const sheet = getSheet('Entregadores');
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === id) {
-      sheet.deleteRow(i + 1);
-      return { success: true };
-    }
-  }
-  return { success: false };
-}
-
 function salvarPedido(dados) {
   const sheetPedidos = getSheet('Pedidos');
   const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy HH:mm:ss");
@@ -213,7 +190,9 @@ function atualizarStatusPedido(idPedido, novoStatus) {
           const valor = data[i][6]; 
           const desc = "Venda: " + data[i][2]; 
           const metodo = data[i][9]; 
-          registrarMovimentacao('Entrada', valor, desc, 'Venda', metodo);
+          const tipo = (metodo === 'A Receber') ? 'A Receber' : 'Entrada';
+          const categoria = (metodo === 'A Receber') ? 'Venda Fiada' : 'Venda';
+          registrarMovimentacao(tipo, valor, desc, categoria, metodo);
         }
         return { success: true };
       }
@@ -230,19 +209,45 @@ function registrarMovimentacao(tipo, valor, descricao, categoria, metodo = '-') 
   return { success: true };
 }
 
+function baixarPagamento(id, metodo) {
+  try {
+    const sheet = getSheet('Financeiro');
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === id && data[i][2] === 'A Receber') {
+        const valor = data[i][4];
+        const descOriginal = data[i][3];
+        const categoria = data[i][5];
+        
+        // Marca o antigo como Liquidado
+        sheet.getRange(i + 1, 3).setValue('Liquidado');
+        
+        // Registra a nova Entrada
+        registrarMovimentacao('Entrada', valor, "[BAIXA] " + descOriginal, categoria, metodo);
+        return { success: true };
+      }
+    }
+    return { success: false };
+  } catch (e) { return { success: false, error: e.toString() }; }
+}
+
 function getResumoFinanceiro() {
   const sheet = getSheet('Financeiro');
   const data = sheet.getDataRange().getValues();
-  let totalEntradas = 0, totalSaidas = 0, porMetodo = {}, recentes = [];
+  let totalEntradas = 0, totalSaidas = 0, totalAReceber = 0, porMetodo = {}, recentes = [];
   for (let i = 1; i < data.length; i++) {
     const tipo = data[i][2], valor = Number(data[i][4]), metodo = data[i][6];
     if (tipo === 'Entrada') {
       totalEntradas += valor;
       porMetodo[metodo] = (porMetodo[metodo] || 0) + valor;
-    } else { totalSaidas += valor; }
+    } else if (tipo === 'Saída') {
+      totalSaidas += valor;
+    } else if (tipo === 'A Receber') {
+      totalAReceber += valor;
+    }
     recentes.unshift({ id: data[i][0], dataHora: data[i][1], tipo: tipo, descricao: data[i][3], valor: valor, categoria: data[i][5], metodo: metodo });
   }
-  return { totalEntradas, totalSaidas, saldo: totalEntradas - totalSaidas, porMetodo, recentes: recentes.slice(0, 50) };
+  return { totalEntradas, totalSaidas, totalAReceber, saldo: totalEntradas - totalSaidas, porMetodo, recentes: recentes.slice(0, 50) };
 }
 
 function listarUltimosPedidos() {

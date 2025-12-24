@@ -13,7 +13,7 @@ const App: React.FC = () => {
   const [resumo, setResumo] = useState<ResumoFinanceiro | null>(null);
 
   // Estados de Navegação
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'clientes' | 'equipe' | 'caixa' | 'estoque'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'clientes' | 'equipe' | 'caixa' | 'estoque' | 'cobranca'>('dashboard');
 
   // Estados de Pedido
   const [telefone, setTelefone] = useState('');
@@ -26,10 +26,13 @@ const App: React.FC = () => {
   const [formaPagamento, setFormaPagamento] = useState<string>(PaymentMethod.DINHEIRO);
   const [showSuggestions, setShowSuggestions] = useState(false);
   
-  // Estados de Edição
+  // Estados de Edição e Modais
   const [isFinanceModalOpen, setIsFinanceModalOpen] = useState(false);
+  const [isBaixaModalOpen, setIsBaixaModalOpen] = useState<{ open: boolean, mov: Movimentacao | null }>({ open: false, mov: null });
+  const [metodoBaixa, setMetodoBaixa] = useState<string>(PaymentMethod.PIX);
+
   const [finEntry, setFinEntry] = useState<{
-    tipo: 'Entrada' | 'Saída',
+    tipo: 'Entrada' | 'Saída' | 'A Receber',
     descricao: string,
     valor: string,
     categoria: string,
@@ -58,6 +61,7 @@ const App: React.FC = () => {
 
   const categoriasReceita = ['Venda de Gás', 'Venda de Água', 'Ajuste de Saldo', 'Outros'];
   const categoriasDespesa = ['Combustível', 'Manutenção Moto', 'Aluguel', 'Energia/Água', 'Salários', 'Compra de Estoque', 'Marketing', 'Outros'];
+  const categoriasAReceber = ['Venda Fiada', 'Promissória', 'Convênio Empresa', 'Outros'];
 
   const loadData = useCallback(async () => {
     try {
@@ -224,6 +228,27 @@ const App: React.FC = () => {
     setTimeout(() => setMessage(null), 3000);
   };
 
+  const handleConfirmBaixa = async () => {
+    if (!isBaixaModalOpen.mov) return;
+    
+    setLoading(true);
+    const res = await gasService.baixarPagamento(isBaixaModalOpen.mov.id, metodoBaixa);
+    setLoading(false);
+    
+    if (res.success) {
+      setMessage({ type: 'success', text: 'Pagamento liquidado e caixa atualizado!' });
+      setIsBaixaModalOpen({ open: false, mov: null });
+      loadData();
+    }
+    setTimeout(() => setMessage(null), 3000);
+  };
+
+  const handleSendWhatsAppBilling = (mov: Movimentacao) => {
+    const msg = `Olá! 👋 Passando para lembrar do seu acerto pendente com a *BIO GÁS* referente a: _${mov.descricao}_ no valor de *R$ ${mov.valor.toFixed(2)}*. %0A%0ASe já efetuou o pagamento, por favor desconsidere. Caso precise da nossa chave PIX, é só pedir! Obrigado!`;
+    const url = `https://api.whatsapp.com/send?text=${msg}`;
+    window.open(url, '_blank');
+  };
+
   const handleSaveCustomer = async () => {
     if (!cliEdit?.nome || !cliEdit?.telefone) return;
     setLoading(true);
@@ -273,17 +298,35 @@ const App: React.FC = () => {
   };
 
   const handleCreateOrder = async () => {
-    if (!nome || !telefone || cart.length === 0 || !selectedEntregador) return;
+    if (!telefone) { setMessage({ type: 'error', text: 'Digite o telefone!' }); return; }
+    if (!nome) { setMessage({ type: 'error', text: 'Digite o nome do cliente!' }); return; }
+    if (!endereco) { setMessage({ type: 'error', text: 'Digite o endereço!' }); return; }
+    if (cart.length === 0) { setMessage({ type: 'error', text: 'Adicione pelo menos um item!' }); return; }
+    if (!selectedEntregador) { setMessage({ type: 'error', text: 'Selecione o entregador!' }); return; }
+
     setLoading(true);
     const total = cart.reduce((acc, it) => acc + (it.qtd * it.precoUnitario), 0);
-    const pedidoDados = { nomeCliente: nome, telefoneCliente: telefone, endereco, itens: cart, valorTotal: total, entregador: selectedEntregador, formaPagamento };
+    const pedidoDados = { 
+      nomeCliente: nome, 
+      telefoneCliente: telefone, 
+      endereco, 
+      itens: cart, 
+      valorTotal: total, 
+      entregador: selectedEntregador, 
+      formaPagamento 
+    };
+    
     const res = await gasService.salvarPedido(pedidoDados);
     setLoading(false);
+    
     if (res.success) {
-      setMessage({ type: 'success', text: 'Pedido registrado!' });
-      setTelefone(''); setNome(''); setEndereco(''); setCart([]); loadData();
+      setMessage({ type: 'success', text: 'Pedido registrado com sucesso!' });
+      setTelefone(''); setNome(''); setEndereco(''); setCart([]); setSelectedEntregador(''); setFormaPagamento(PaymentMethod.DINHEIRO);
+      loadData();
+    } else {
+      setMessage({ type: 'error', text: 'Erro ao registrar pedido.' });
     }
-    setTimeout(() => setMessage(null), 3000);
+    setTimeout(() => setMessage(null), 4000);
   };
 
   const filteredClientes = useMemo(() => {
@@ -295,6 +338,11 @@ const App: React.FC = () => {
   }, [clientes, cliFilter]);
 
   const activeOrders = useMemo(() => pedidos.filter(p => p.status === 'Pendente' || p.status === 'Em Rota'), [pedidos]);
+
+  const inadimplentes = useMemo(() => {
+    if (!resumo) return [];
+    return resumo.recentes.filter(m => m.tipo === 'A Receber');
+  }, [resumo]);
 
   return (
     <div className="flex h-screen overflow-hidden text-slate-900">
@@ -316,6 +364,7 @@ const App: React.FC = () => {
               { id: 'dashboard', icon: 'fa-chart-pie', label: 'Painel Central' },
               { id: 'clientes', icon: 'fa-address-book', label: 'Clientes' },
               { id: 'caixa', icon: 'fa-wallet', label: 'Financeiro' },
+              { id: 'cobranca', icon: 'fa-file-invoice-dollar', label: 'Cobrança' },
               { id: 'equipe', icon: 'fa-motorcycle', label: 'Entregadores' },
               { id: 'estoque', icon: 'fa-boxes-stacked', label: 'Estoque' },
             ].map(item => (
@@ -335,6 +384,7 @@ const App: React.FC = () => {
             {activeTab === 'dashboard' && 'Novo Pedido'}
             {activeTab === 'clientes' && 'Gestão de Clientes'}
             {activeTab === 'caixa' && 'Fluxo de Caixa'}
+            {activeTab === 'cobranca' && 'Gestão de Recebíveis'}
             {activeTab === 'equipe' && 'Equipe Logística'}
             {activeTab === 'estoque' && 'Estoque'}
           </h1>
@@ -353,7 +403,7 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
               <div className="xl:col-span-2 space-y-8">
                 {/* Stats Summary Dashboard */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
                     <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl"><i className="fas fa-arrow-up"></i></div>
                     <div>
@@ -369,6 +419,13 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl"><i className="fas fa-clock-rotate-left"></i></div>
+                    <div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase">A Receber</div>
+                      <div className="text-lg font-black text-slate-800">R$ {resumo?.totalAReceber.toFixed(2) || '0.00'}</div>
+                    </div>
+                  </div>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
                     <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#002B5B] flex items-center justify-center text-xl"><i className="fas fa-wallet"></i></div>
                     <div>
                       <div className="text-[10px] font-black text-slate-400 uppercase">Saldo</div>
@@ -378,6 +435,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="bg-white rounded-[2.5rem] p-10 shadow-sm border border-slate-200">
+                  {/* Formulário de Pedido */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                     <div className="space-y-2">
                         <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Telefone</label>
@@ -387,11 +445,11 @@ const App: React.FC = () => {
                         <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Nome do Cliente</label>
                         <input type="text" value={nome} onChange={e => { setNome(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} placeholder="Digite para buscar..." className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] rounded-2xl py-5 px-6 font-black text-lg outline-none transition-all" />
                         {showSuggestions && nameSuggestions.length > 0 && (
-                          <div className="absolute top-[100%] left-0 w-full bg-white/95 backdrop-blur-xl border border-slate-200 shadow-2xl rounded-3xl mt-2 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                          <div className="absolute top-[100%] left-0 w-full bg-white/95 backdrop-blur-xl border border-slate-200 shadow-2xl rounded-3xl mt-2 z-50 overflow-hidden animate-in fade-in">
                             {nameSuggestions.map(c => (
                               <button key={c.id} onClick={() => selectCustomer(c)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 group text-left">
                                 <div className="flex flex-col"><span className="font-black text-slate-800">{c.nome}</span><span className="text-[10px] font-bold text-slate-400 uppercase">{c.bairro || 'Sem Bairro'}</span></div>
-                                <i className="fas fa-arrow-right text-slate-200 group-hover:text-[#002B5B] transition-all"></i>
+                                <i className="fas fa-arrow-right text-slate-200 group-hover:text-[#002B5B]"></i>
                               </button>
                             ))}
                           </div>
@@ -399,9 +457,10 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="space-y-2 mb-8 relative">
-                    <div className="flex justify-between items-center px-2 mb-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Endereço de Entrega</label></div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Endereço de Entrega</label>
                     <textarea value={endereco} onChange={e => setEndereco(e.target.value)} placeholder="Rua, Número, Bairro, Referência..." className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] rounded-2xl py-5 px-6 font-bold text-lg outline-none h-24 resize-none transition-all" />
                   </div>
+                  {/* Seleção de Produtos e Carrinho */}
                   <div className="mb-10 p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
                     <div className="flex flex-col md:flex-row gap-4 mb-6">
                       <select value={selectedProduto} onChange={e => setSelectedProduto(e.target.value)} className="flex-1 bg-white py-4 px-6 rounded-xl font-bold border-2 border-transparent focus:border-[#002B5B] outline-none">
@@ -417,17 +476,24 @@ const App: React.FC = () => {
                         <div className="flex items-center gap-4"><span className="font-black text-slate-400 text-xs">R$ {(item.qtd * item.precoUnitario).toFixed(2)}</span><button onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-rose-400"><i className="fas fa-trash-alt"></i></button></div>
                       </div>
                     ))}
+                    {cart.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 flex justify-end">
+                        <span className="font-black text-[#002B5B] uppercase text-xs">Total: <span className="text-lg ml-2">R$ {cart.reduce((acc, it) => acc + (it.qtd * it.precoUnitario), 0).toFixed(2)}</span></span>
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                    <select value={selectedEntregador} onChange={e => setSelectedEntregador(e.target.value)} className="w-full bg-slate-50 py-5 px-6 rounded-2xl font-bold border-2 border-transparent focus:border-[#002B5B]">
+                    <select value={selectedEntregador} onChange={e => setSelectedEntregador(e.target.value)} className="w-full bg-slate-50 py-5 px-6 rounded-2xl font-bold border-2 border-transparent focus:border-[#002B5B] outline-none">
                       <option value="">Entregador...</option>
                       {entregadores.filter(e => e.status === 'Ativo').map(e => <option key={e.id} value={e.nome}>{e.nome} ({e.veiculo})</option>)}
                     </select>
-                    <select value={formaPagamento} onChange={e => setFormaPagamento(e.target.value)} className="w-full bg-slate-50 py-5 px-6 rounded-2xl font-bold border-2 border-transparent focus:border-[#002B5B]">
+                    <select value={formaPagamento} onChange={e => setFormaPagamento(e.target.value)} className="w-full bg-slate-50 py-5 px-6 rounded-2xl font-bold border-2 border-transparent focus:border-[#002B5B] outline-none">
                       {Object.values(PaymentMethod).map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
-                  <button onClick={handleCreateOrder} disabled={loading || cart.length === 0} className="w-full bg-[#002B5B] text-white py-6 rounded-[2rem] font-black uppercase text-sm shadow-xl hover:bg-blue-900 transition-all">Finalizar Pedido</button>
+                  <button onClick={handleCreateOrder} disabled={loading} className={`w-full py-6 rounded-[2rem] font-black uppercase text-sm shadow-xl transition-all flex items-center justify-center gap-3 ${cart.length === 0 ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#002B5B] text-white hover:bg-blue-900'}`}>
+                    <i className="fas fa-check-circle"></i> Finalizar Pedido
+                  </button>
                 </div>
               </div>
 
@@ -435,7 +501,7 @@ const App: React.FC = () => {
                  <h3 className="font-black text-slate-800 uppercase text-xs tracking-wider">📦 Entregas Ativas</h3>
                  <div className="space-y-4 max-h-[85vh] overflow-y-auto pr-2 custom-scrollbar">
                     {activeOrders.map(p => (
-                        <div key={p.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm group hover:border-[#0088CC]/30 transition-all">
+                        <div key={p.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm group">
                             <div className="flex justify-between items-start mb-4">
                               <div className={`text-[10px] font-black px-3 py-1 rounded-full uppercase ${p.status === 'Pendente' ? 'bg-orange-50 text-orange-600' : 'bg-blue-50 text-[#002B5B]'}`}>{p.status}</div>
                               <div className="text-[10px] font-bold text-slate-400">{p.dataHora}</div>
@@ -447,18 +513,18 @@ const App: React.FC = () => {
                                <span className="text-[10px] font-black text-slate-600 uppercase">Motorista: {p.entregador}</span>
                             </div>
                             <div className="flex flex-col gap-2 pt-4 border-t border-slate-50">
-                                <div className="flex justify-between items-center mb-2"><div className="text-sm font-black text-[#002B5B]">R$ {Number(p.valorTotal).toFixed(2)}</div></div>
+                                <div className="text-sm font-black text-[#002B5B] mb-2">R$ {Number(p.valorTotal).toFixed(2)}</div>
                                 <div className="flex gap-2">
                                     {p.status === 'Pendente' && (
                                       <>
                                         <button onClick={async () => { setLoading(true); await gasService.atualizarStatusPedido(p.id, 'Em Rota'); await loadData(); }} className="flex-1 bg-[#002B5B] text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg">Despachar</button>
-                                        <button onClick={async () => { setLoading(true); await gasService.atualizarStatusPedido(p.id, 'Entregue'); await loadData(); setMessage({ type: 'success', text: 'Entregue!' }); setTimeout(() => setMessage(null), 3000); }} className="px-4 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center gap-1 shadow-sm"><i className="fas fa-check"></i> Finalizar</button>
+                                        <button onClick={async () => { setLoading(true); await gasService.atualizarStatusPedido(p.id, 'Entregue'); await loadData(); setMessage({ type: 'success', text: 'Entregue!' }); setTimeout(() => setMessage(null), 3000); }} className="px-4 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all">Concluir</button>
                                       </>
                                     )}
                                     {p.status === 'Em Rota' && (
                                       <>
-                                        <button onClick={() => handleSendWhatsAppRoute(p)} className="flex-1 bg-emerald-500 text-white py-3 rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 shadow-lg hover:bg-emerald-600 transition-all"><i className="fab fa-whatsapp"></i> Rota</button>
-                                        <button onClick={async () => { setLoading(true); await gasService.atualizarStatusPedido(p.id, 'Entregue'); await loadData(); setMessage({ type: 'success', text: 'Entregue!' }); setTimeout(() => setMessage(null), 3000); }} className="px-4 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center gap-1 shadow-sm"><i className="fas fa-check"></i> Finalizar</button>
+                                        <button onClick={() => handleSendWhatsAppRoute(p)} className="flex-1 bg-emerald-500 text-white py-3 rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 shadow-lg"><i className="fab fa-whatsapp"></i> Rota</button>
+                                        <button onClick={async () => { setLoading(true); await gasService.atualizarStatusPedido(p.id, 'Entregue'); await loadData(); setMessage({ type: 'success', text: 'Entregue!' }); setTimeout(() => setMessage(null), 3000); }} className="px-4 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all">Concluir</button>
                                       </>
                                     )}
                                 </div>
@@ -470,83 +536,120 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'caixa' && resumo && (
-            <div className="space-y-10">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Receitas Totais</div>
-                    <div className="text-4xl font-black">R$ {resumo.totalEntradas.toFixed(2)}</div>
-                  </div>
-                  <i className="fas fa-arrow-trend-up absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
+          {activeTab === 'cobranca' && (
+            <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="bg-amber-500 p-10 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                <div className="relative z-10">
+                   <div className="text-sm font-black uppercase opacity-70 mb-2 tracking-widest">Total a Receber em Aberto</div>
+                   <div className="text-5xl font-black">R$ {resumo?.totalAReceber.toFixed(2) || '0.00'}</div>
+                   <p className="mt-4 text-xs font-bold opacity-80 uppercase tracking-wider italic">Clique em "Dar Baixa" para converter pendências em dinheiro no caixa.</p>
                 </div>
-                <div className="bg-rose-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Despesas Totais</div>
-                    <div className="text-4xl font-black">R$ {resumo.totalSaidas.toFixed(2)}</div>
-                  </div>
-                  <i className="fas fa-arrow-trend-down absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
-                </div>
-                <div className="bg-[#002B5B] p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Saldo Atual</div>
-                    <div className="text-4xl font-black">R$ {resumo.saldo.toFixed(2)}</div>
-                  </div>
-                  <i className="fas fa-vault absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
-                </div>
+                <i className="fas fa-comments-dollar absolute -right-6 -bottom-6 text-[12rem] text-white/10"></i>
               </div>
 
               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-10">
-                  <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
-                    <div>
-                      <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Fluxo de Caixa</h3>
-                      <p className="text-sm font-bold text-slate-400">Gerencie todas as entradas e saídas do negócio.</p>
-                    </div>
-                    <button onClick={() => setIsFinanceModalOpen(true)} className="bg-[#002B5B] text-[#FFD700] px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:scale-105 transition-all flex items-center gap-3">
-                      <i className="fas fa-plus-circle"></i> Novo Lançamento
-                    </button>
+                  <div className="flex justify-between items-center mb-10">
+                     <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Pendências de Clientes</h3>
+                     <div className="text-[10px] font-black text-amber-600 bg-amber-50 px-4 py-2 rounded-full border border-amber-100 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
+                        {inadimplentes.length} LANÇAMENTO(S) PENDENTE(S)
+                     </div>
                   </div>
 
-                  <div className="space-y-4">
-                    {resumo.recentes.length === 0 ? (
-                      <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed">
-                        <i className="fas fa-receipt text-4xl text-slate-200 mb-4"></i>
-                        <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Nenhuma movimentação encontrada</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {inadimplentes.length === 0 ? (
+                      <div className="col-span-full text-center py-20 bg-slate-50 rounded-3xl border border-dashed">
+                        <i className="fas fa-smile-beam text-4xl text-emerald-400 mb-4"></i>
+                        <p className="text-slate-400 font-bold uppercase text-xs tracking-widest">Nenhum valor em atraso. Parabéns!</p>
                       </div>
-                    ) : (
-                      resumo.recentes.map(m => (
-                        <div key={m.id} className="flex items-center justify-between p-6 bg-slate-50 rounded-[2rem] border border-slate-100 hover:bg-white hover:shadow-md transition-all group">
-                          <div className="flex items-center gap-5">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-xl shadow-sm ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
-                               <i className={`fas ${m.tipo === 'Entrada' ? 'fa-arrow-up' : 'fa-arrow-down'}`}></i>
-                            </div>
-                            <div>
-                              <div className="font-black text-slate-800 group-hover:text-[#002B5B] transition-colors">{m.descricao}</div>
-                              <div className="flex items-center gap-3 mt-1">
-                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider bg-white px-2 py-0.5 rounded border">{m.categoria}</span>
-                                <span className="text-[10px] font-bold text-slate-300 italic">{m.dataHora}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className={`text-xl font-black ${m.tipo === 'Entrada' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {m.tipo === 'Entrada' ? '+' : '-'} R$ {m.valor.toFixed(2)}
-                          </div>
-                        </div>
-                      ))
-                    )}
+                    ) : inadimplentes.map(m => (
+                      <div key={m.id} className="bg-white border-2 border-amber-100 p-6 rounded-[2rem] shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                         <div className="flex justify-between items-start mb-4">
+                            <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded-md">{m.categoria}</div>
+                            <div className="text-[10px] font-bold text-slate-300">{m.dataHora}</div>
+                         </div>
+                         <div className="font-black text-slate-800 text-lg mb-2 group-hover:text-amber-600 transition-colors">{m.descricao}</div>
+                         <div className="text-2xl font-black text-[#002B5B] mb-6">R$ {m.valor.toFixed(2)}</div>
+                         
+                         <div className="flex gap-2 pt-4 border-t border-slate-50">
+                            <button 
+                              onClick={() => setIsBaixaModalOpen({ open: true, mov: m })} 
+                              className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-emerald-700 transition-all transform active:scale-95"
+                            >
+                              Dar Baixa
+                            </button>
+                            <button 
+                              onClick={() => handleSendWhatsAppBilling(m)} 
+                              className="w-12 h-12 bg-white border-2 border-slate-100 text-emerald-500 rounded-xl hover:bg-emerald-50 transition-all flex items-center justify-center"
+                            >
+                              <i className="fab fa-whatsapp text-xl"></i>
+                            </button>
+                         </div>
+                      </div>
+                    ))}
                   </div>
               </div>
             </div>
           )}
 
+          {/* Aba Caixa e outras mantidas conforme código anterior... */}
+          {activeTab === 'caixa' && resumo && (
+             <div className="space-y-10 animate-in fade-in duration-500">
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                 <div className="bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                   <div className="relative z-10"><div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Receitas Totais</div><div className="text-4xl font-black">R$ {resumo.totalEntradas.toFixed(2)}</div></div>
+                   <i className="fas fa-arrow-trend-up absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
+                 </div>
+                 <div className="bg-rose-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                   <div className="relative z-10"><div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Despesas Totais</div><div className="text-4xl font-black">R$ {resumo.totalSaidas.toFixed(2)}</div></div>
+                   <i className="fas fa-arrow-trend-down absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
+                 </div>
+                 <div className="bg-amber-500 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                   <div className="relative z-10"><div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">A Receber</div><div className="text-4xl font-black">R$ {resumo.totalAReceber.toFixed(2)}</div></div>
+                   <i className="fas fa-clock-rotate-left absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
+                 </div>
+                 <div className="bg-[#002B5B] p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                   <div className="relative z-10"><div className="text-[10px] font-black uppercase opacity-70 mb-2 tracking-widest">Saldo Atual</div><div className="text-4xl font-black">R$ {resumo.saldo.toFixed(2)}</div></div>
+                   <i className="fas fa-vault absolute -right-4 -bottom-4 text-8xl text-white/10"></i>
+                 </div>
+               </div>
+
+               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-10">
+                   <div className="flex justify-between items-center mb-10">
+                     <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Fluxo de Caixa</h3>
+                     <button onClick={() => setIsFinanceModalOpen(true)} className="bg-[#002B5B] text-[#FFD700] px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg">Novo Lançamento</button>
+                   </div>
+                   <div className="space-y-4">
+                     {resumo.recentes.filter(m => m.tipo !== 'Liquidado').map(m => (
+                       <div key={m.id} className="flex items-center justify-between p-6 bg-slate-50 rounded-[2rem] border border-slate-100 hover:bg-white transition-all">
+                         <div className="flex items-center gap-5">
+                           <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-xl ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-600' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
+                              <i className={`fas ${m.tipo === 'Entrada' ? 'fa-arrow-up' : m.tipo === 'Saída' ? 'fa-arrow-down' : 'fa-clock-rotate-left'}`}></i>
+                           </div>
+                           <div>
+                             <div className="font-black text-slate-800">{m.descricao}</div>
+                             <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">{m.categoria} • {m.metodo || 'N/A'}</div>
+                           </div>
+                         </div>
+                         <div className={`text-xl font-black ${m.tipo === 'Entrada' ? 'text-emerald-600' : m.tipo === 'Saída' ? 'text-rose-600' : 'text-amber-600'}`}>
+                           {m.tipo === 'Entrada' ? '+' : m.tipo === 'Saída' ? '-' : '⌛'} R$ {m.valor.toFixed(2)}
+                         </div>
+                       </div>
+                     ))}
+                   </div>
+               </div>
+             </div>
+          )}
+
+          {/* Outras Abas mantidas... */}
           {activeTab === 'clientes' && (
             <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-              <div className="p-10 border-b flex flex-col md:flex-row justify-between items-center gap-6 bg-slate-50/30">
-                <input type="text" value={cliFilter} onChange={e => setCliFilter(e.target.value)} placeholder="Procurar cliente..." className="w-full md:w-96 bg-white border-2 border-transparent focus:border-[#002B5B] rounded-2xl py-4 px-6 font-bold outline-none shadow-sm transition-all" />
+              <div className="p-10 border-b flex justify-between items-center gap-6 bg-slate-50/30">
+                <input type="text" value={cliFilter} onChange={e => setCliFilter(e.target.value)} placeholder="Procurar cliente..." className="w-full md:w-96 bg-white border-2 rounded-2xl py-4 px-6 font-bold outline-none" />
                 <div className="flex gap-4">
                   <input type="file" ref={fileInputRef} onChange={handleImportExcel} accept=".xlsx, .xls, .csv" className="hidden" />
-                  <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-emerald-700 transition-all flex items-center gap-2"><i className="fas fa-file-excel"></i> Importar Excel</button>
-                  <button onClick={() => setCliEdit({nome: '', telefone: '', endereco: ''})} className="bg-[#002B5B] text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-900 transition-all flex items-center gap-2"><i className="fas fa-plus"></i> Novo Cliente</button>
+                  <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg">Importar Excel</button>
+                  <button onClick={() => setCliEdit({nome: '', telefone: '', endereco: ''})} className="bg-[#002B5B] text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg">Novo Cliente</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-10 custom-scrollbar">
@@ -559,11 +662,11 @@ const App: React.FC = () => {
                       <tr key={c.id} className="group hover:bg-slate-50/50">
                         <td className="py-6 font-black text-slate-800">{c.nome}</td>
                         <td className="py-6 font-bold text-slate-500">{c.telefone}</td>
-                        <td className="py-6 text-sm text-slate-600 max-w-[300px] truncate">{c.endereco}</td>
+                        <td className="py-6 text-sm text-slate-600">{c.endereco}</td>
                         <td className="py-6 text-right">
                           <div className="flex justify-end gap-2">
-                            <button onClick={() => setCliEdit(c)} className="w-10 h-10 bg-white border rounded-xl text-slate-400 hover:text-[#002B5B] shadow-sm transition-all"><i className="fas fa-edit"></i></button>
-                            <button onClick={() => handleDeleteCustomer(c.id)} className="w-10 h-10 bg-white border rounded-xl text-rose-400 hover:bg-rose-600 hover:text-white shadow-sm transition-all"><i className="fas fa-trash-alt"></i></button>
+                            <button onClick={() => setCliEdit(c)} className="w-10 h-10 border rounded-xl text-slate-400 hover:text-[#002B5B]"><i className="fas fa-edit"></i></button>
+                            <button onClick={() => handleDeleteCustomer(c.id)} className="w-10 h-10 border rounded-xl text-rose-400 hover:bg-rose-600 hover:text-white"><i className="fas fa-trash-alt"></i></button>
                           </div>
                         </td>
                       </tr>
@@ -573,14 +676,15 @@ const App: React.FC = () => {
               </div>
             </div>
           )}
-
+          
+          {/* Equipe e Estoque omitidos para brevidade mas permanecem no código final se necessário... */}
           {activeTab === 'equipe' && (
              <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 p-10">
                <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Equipe Logística</h2><button onClick={() => setEntEdit({ nome: '', telefone: '', veiculo: '', status: 'Ativo' })} className="bg-[#002B5B] text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg">Adicionar Entregador</button></div>
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                  {entregadores.map(e => (
-                   <div key={e.id} className="p-8 bg-slate-50 border border-slate-100 rounded-[3rem] flex flex-col items-center text-center relative group hover:bg-white transition-all shadow-sm">
-                     <button onClick={() => setEntEdit(e)} className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 w-10 h-10 bg-white rounded-xl shadow-md text-slate-400 hover:text-[#002B5B] transition-all flex items-center justify-center"><i className="fas fa-edit"></i></button>
+                   <div key={e.id} className="p-8 bg-slate-50 border border-slate-100 rounded-[3rem] flex flex-col items-center text-center group relative hover:bg-white transition-all shadow-sm">
+                     <button onClick={() => setEntEdit(e)} className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 w-10 h-10 bg-white rounded-xl shadow-md text-slate-400 hover:text-[#002B5B] flex items-center justify-center"><i className="fas fa-edit"></i></button>
                      <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center text-[#002B5B] text-3xl shadow-sm mb-6 border border-slate-100"><i className="fas fa-motorcycle"></i></div>
                      <div className="font-black text-slate-800 text-xl mb-1">{e.nome}</div>
                      <div className="text-xs font-bold text-[#0088CC] uppercase mb-4">{e.veiculo || 'Moto'}</div>
@@ -596,9 +700,7 @@ const App: React.FC = () => {
              <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 p-10">
                 <div className="flex justify-between items-center mb-10">
                   <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Controle de Estoque</h2>
-                  <button onClick={() => setProdEdit({nome: '', preco: 0, estoque: 0})} className="bg-[#002B5B] text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:scale-105 transition-all">
-                    <i className="fas fa-plus-circle mr-2"></i> Novo Produto
-                  </button>
+                  <button onClick={() => setProdEdit({ nome: '', preco: 0, estoque: 0 })} className="bg-[#002B5B] text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:scale-105 transition-all"><i className="fas fa-plus-circle mr-2"></i> Novo Produto</button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                   {produtos.map(p => (
@@ -612,31 +714,14 @@ const App: React.FC = () => {
                       </div>
                       <div className="font-black text-slate-800 text-xl mb-1 group-hover:text-[#002B5B] transition-colors">{p.nome}</div>
                       <div className="text-sm font-bold text-[#0088CC] mb-6 bg-blue-50 px-3 py-1 rounded-full inline-block">R$ {p.preco.toFixed(2)}</div>
-                      
-                      {/* Seção de Ajuste Rápido de Estoque */}
                       <div className="mb-6 p-4 bg-white/50 border border-slate-200 rounded-2xl space-y-3 shadow-sm">
                         <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Ajuste Manual</label>
                         <div className="flex gap-2">
-                           <input 
-                              type="number" 
-                              value={estoqueQuickInput[p.id] || ''} 
-                              onChange={(e) => setEstoqueQuickInput({...estoqueQuickInput, [p.id]: e.target.value})}
-                              placeholder="Nova qtd" 
-                              className="flex-1 bg-white border border-slate-100 py-2 px-3 rounded-xl text-xs font-bold outline-none focus:border-[#002B5B]"
-                           />
-                           <button 
-                              onClick={() => handleQuickEstoqueAdjust(p)}
-                              disabled={!estoqueQuickInput[p.id]}
-                              className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm disabled:opacity-50"
-                           >
-                             Ajustar
-                           </button>
+                           <input type="number" value={estoqueQuickInput[p.id] || ''} onChange={(e) => setEstoqueQuickInput({...estoqueQuickInput, [p.id]: e.target.value})} placeholder="Nova qtd" className="flex-1 bg-white border border-slate-100 py-2 px-3 rounded-xl text-xs font-bold outline-none focus:border-[#002B5B]" />
+                           <button onClick={() => handleQuickEstoqueAdjust(p)} disabled={!estoqueQuickInput[p.id]} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm disabled:opacity-50 hover:bg-emerald-700 transition-all">Ajustar</button>
                         </div>
                       </div>
-
-                      <button onClick={() => setProdEdit(p)} className="w-full bg-white border-2 border-slate-100 py-3 rounded-2xl font-black text-[10px] uppercase text-slate-500 hover:bg-[#002B5B] hover:text-white hover:border-[#002B5B] transition-all shadow-sm">
-                        <i className="fas fa-edit mr-2"></i> Editar Dados do Produto
-                      </button>
+                      <button onClick={() => setProdEdit(p)} className="w-full bg-white border-2 border-slate-100 py-3 rounded-2xl font-black text-[10px] uppercase text-slate-500 hover:bg-[#002B5B] hover:text-white hover:border-[#002B5B] transition-all shadow-sm"><i className="fas fa-edit mr-2"></i> Editar Dados</button>
                     </div>
                   ))}
                 </div>
@@ -645,73 +730,88 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* MODAL CONTROLE DE CAIXA DEDICADO */}
+      {/* MODAL BAIXA CUSTOMIZADO (SUBSTITUI O PROMPT) */}
+      {isBaixaModalOpen.open && isBaixaModalOpen.mov && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[350] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-lg shadow-2xl p-10 animate-in zoom-in duration-300">
+             <div className="flex justify-between items-center mb-10">
+                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Confirmar Recebimento</h2>
+                <button onClick={() => setIsBaixaModalOpen({ open: false, mov: null })} className="text-slate-400 hover:text-rose-500"><i className="fas fa-times text-xl"></i></button>
+             </div>
+             
+             <div className="bg-slate-50 p-6 rounded-3xl mb-8 border border-slate-100">
+                <div className="text-[10px] font-black text-slate-400 uppercase mb-1">Dívida de</div>
+                <div className="text-xl font-black text-[#002B5B] mb-4">{isBaixaModalOpen.mov.descricao}</div>
+                <div className="text-3xl font-black text-emerald-600">R$ {isBaixaModalOpen.mov.valor.toFixed(2)}</div>
+             </div>
+
+             <div className="space-y-4 mb-10">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Como o cliente pagou?</label>
+                <div className="grid grid-cols-2 gap-3">
+                   {[PaymentMethod.PIX, PaymentMethod.DINHEIRO, PaymentMethod.CARTAO_DEBITO, PaymentMethod.CARTAO_CREDITO].map(m => (
+                     <button 
+                       key={m} 
+                       onClick={() => setMetodoBaixa(m)} 
+                       className={`py-4 px-2 rounded-2xl font-black text-[10px] uppercase border-2 transition-all ${metodoBaixa === m ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-emerald-200'}`}
+                     >
+                       {m}
+                     </button>
+                   ))}
+                </div>
+             </div>
+
+             <button onClick={handleConfirmBaixa} className="w-full bg-emerald-600 text-white py-6 rounded-[2rem] font-black uppercase text-sm shadow-xl hover:bg-emerald-700 transition-all flex items-center justify-center gap-3">
+               <i className="fas fa-check-circle"></i> Confirmar Baixa e Entrar Receita
+             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modais Financeiro, Produto, Cliente, Entregador... (mantidos do código anterior) */}
       {isFinanceModalOpen && resumo && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[250] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] w-full max-w-2xl shadow-2xl p-10 animate-in zoom-in duration-300 flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-center mb-8 shrink-0">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3">
-                <i className="fas fa-wallet text-[#002B5B]"></i> Controle de Caixa
-              </h2>
+              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3"><i className="fas fa-wallet text-[#002B5B]"></i> Lançamento Financeiro</h2>
               <button onClick={() => setIsFinanceModalOpen(false)} className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl hover:bg-rose-50 hover:text-rose-600 transition-colors"><i className="fas fa-times"></i></button>
             </div>
-
-            <div className="grid grid-cols-3 gap-4 mb-10 shrink-0">
-               <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100">
-                  <span className="text-[8px] font-black text-emerald-600 uppercase tracking-widest block mb-1">Entradas</span>
-                  <span className="text-lg font-black text-emerald-700">R$ {resumo.totalEntradas.toFixed(2)}</span>
-               </div>
-               <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100">
-                  <span className="text-[8px] font-black text-rose-600 uppercase tracking-widest block mb-1">Saídas</span>
-                  <span className="text-lg font-black text-rose-700">R$ {resumo.totalSaidas.toFixed(2)}</span>
-               </div>
-               <div className="p-4 rounded-2xl bg-slate-100 border border-slate-200">
-                  <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block mb-1">Saldo Final</span>
-                  <span className="text-lg font-black text-slate-800">R$ {resumo.saldo.toFixed(2)}</span>
-               </div>
-            </div>
-
             <div className="overflow-y-auto custom-scrollbar flex-1 pr-2">
               <div className="space-y-6">
                 <div className="flex gap-4 p-2 bg-slate-50 rounded-2xl">
-                  <button onClick={() => setFinEntry({...finEntry, tipo: 'Entrada', categoria: categoriasReceita[0]})} className={`flex-1 py-4 rounded-xl font-black uppercase text-xs transition-all ${finEntry.tipo === 'Entrada' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400'}`}><i className="fas fa-arrow-up mr-2"></i> Entrada</button>
-                  <button onClick={() => setFinEntry({...finEntry, tipo: 'Saída', categoria: categoriasDespesa[0]})} className={`flex-1 py-4 rounded-xl font-black uppercase text-xs transition-all ${finEntry.tipo === 'Saída' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-400'}`}><i className="fas fa-arrow-down mr-2"></i> Saída</button>
+                  <button onClick={() => setFinEntry({...finEntry, tipo: 'Entrada', categoria: categoriasReceita[0], metodo: PaymentMethod.DINHEIRO})} className={`flex-1 py-4 rounded-xl font-black uppercase text-[10px] transition-all ${finEntry.tipo === 'Entrada' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400'}`}><i className="fas fa-arrow-up mr-2"></i> Entrada</button>
+                  <button onClick={() => setFinEntry({...finEntry, tipo: 'Saída', categoria: categoriasDespesa[0], metodo: PaymentMethod.DINHEIRO})} className={`flex-1 py-4 rounded-xl font-black uppercase text-[10px] transition-all ${finEntry.tipo === 'Saída' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-400'}`}><i className="fas fa-arrow-down mr-2"></i> Saída</button>
+                  <button onClick={() => setFinEntry({...finEntry, tipo: 'A Receber', categoria: categoriasAReceber[0], metodo: 'A Receber'})} className={`flex-1 py-4 rounded-xl font-black uppercase text-[10px] transition-all ${finEntry.tipo === 'A Receber' ? 'bg-amber-500 text-white shadow-lg' : 'text-slate-400'}`}><i className="fas fa-clock-rotate-left mr-2"></i> A Receber</button>
                 </div>
-
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Valor</label>
                   <div className="relative"><span className="absolute left-6 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span><input type="number" value={finEntry.valor} onChange={e => setFinEntry({...finEntry, valor: e.target.value})} placeholder="0,00" className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 pl-14 pr-6 rounded-2xl font-black text-2xl outline-none" /></div>
                 </div>
-
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Descrição</label>
-                  <input type="text" value={finEntry.descricao} onChange={e => setFinEntry({...finEntry, descricao: e.target.value})} placeholder="Ex: Gasolina Moto" className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 px-6 rounded-2xl font-bold outline-none" />
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Descrição / Cliente</label>
+                  <input type="text" value={finEntry.descricao} onChange={e => setFinEntry({...finEntry, descricao: e.target.value})} placeholder="Ex: Venda Fiada João" className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 px-6 rounded-2xl font-bold outline-none" />
                 </div>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Categoria</label>
                     <select value={finEntry.categoria} onChange={e => setFinEntry({...finEntry, categoria: e.target.value})} className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-4 px-6 rounded-2xl font-bold outline-none appearance-none">
-                      {(finEntry.tipo === 'Entrada' ? categoriasReceita : categoriasDespesa).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      {(finEntry.tipo === 'Entrada' ? categoriasReceita : finEntry.tipo === 'Saída' ? categoriasDespesa : categoriasAReceber).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Forma de Pagamento</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Forma / Origem</label>
                     <select value={finEntry.metodo} onChange={e => setFinEntry({...finEntry, metodo: e.target.value})} className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-4 px-6 rounded-2xl font-bold outline-none appearance-none">
-                      {Object.values(PaymentMethod).map(m => <option key={m} value={m}>{m}</option>)}
-                      <option value="Caixa Local">Caixa Local</option>
+                      {finEntry.tipo === 'A Receber' ? <option value="A Receber">A Receber</option> : <>{Object.values(PaymentMethod).filter(m => m !== 'A Receber').map(m => <option key={m} value={m}>{m}</option>)}<option value="Caixa Local">Caixa Local</option></>}
                     </select>
                   </div>
                 </div>
-
-                <button onClick={handleSaveFinance} className={`w-full py-6 rounded-[2rem] font-black uppercase text-sm tracking-widest shadow-xl transition-all mt-6 ${finEntry.tipo === 'Entrada' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-[#002B5B] hover:bg-blue-900'} text-white`}>Salvar Movimentação</button>
+                <button onClick={handleSaveFinance} className={`w-full py-6 rounded-[2rem] font-black uppercase text-sm tracking-widest shadow-xl transition-all mt-6 ${finEntry.tipo === 'Entrada' ? 'bg-emerald-600 hover:bg-emerald-700' : finEntry.tipo === 'Saída' ? 'bg-[#002B5B] hover:bg-blue-900' : 'bg-amber-500 hover:bg-amber-600'} text-white`}>Salvar Lançamento</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL EDITAR PRODUTO (NOVO/EDITAR) */}
+      {/* Outros Modais (Produto, Cliente, Entregador)... */}
       {prodEdit && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[200] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] w-full max-w-xl shadow-2xl p-10 animate-in zoom-in duration-300">
@@ -720,48 +820,12 @@ const App: React.FC = () => {
               <button onClick={() => setProdEdit(null)} className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl hover:bg-rose-50 hover:text-rose-600 transition-colors"><i className="fas fa-times"></i></button>
             </div>
             <div className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Nome do Produto</label>
-                <input 
-                  type="text" 
-                  value={prodEdit.nome || ''} 
-                  onChange={e => setProdEdit({...prodEdit, nome: e.target.value})} 
-                  placeholder="Ex: Gás P13" 
-                  className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 px-6 rounded-2xl font-bold outline-none transition-all" 
-                />
-              </div>
-
+              <input type="text" value={prodEdit.nome || ''} onChange={e => setProdEdit({...prodEdit, nome: e.target.value})} placeholder="Nome do Produto" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-bold outline-none" />
               <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Preço de Venda (R$)</label>
-                  <input 
-                    type="number" 
-                    value={prodEdit.preco} 
-                    onChange={e => setProdEdit({...prodEdit, preco: parseFloat(e.target.value) || 0})} 
-                    placeholder="0,00" 
-                    className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 px-6 rounded-2xl font-black text-lg outline-none" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Estoque Atual (UN)</label>
-                  <input 
-                    type="number" 
-                    value={prodEdit.estoque} 
-                    onChange={e => setProdEdit({...prodEdit, estoque: parseInt(e.target.value) || 0})} 
-                    placeholder="0" 
-                    className="w-full bg-slate-50 border-2 border-transparent focus:border-[#002B5B] py-5 px-6 rounded-2xl font-black text-lg outline-none" 
-                  />
-                </div>
+                <input type="number" value={prodEdit.preco} onChange={e => setProdEdit({...prodEdit, preco: parseFloat(e.target.value) || 0})} placeholder="Preço" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-black outline-none" />
+                <input type="number" value={prodEdit.estoque} onChange={e => setProdEdit({...prodEdit, estoque: parseInt(e.target.value) || 0})} placeholder="Estoque" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-black outline-none" />
               </div>
-
-              <div className="flex gap-4 mt-8">
-                <button onClick={handleSaveProduct} className="flex-1 bg-[#002B5B] text-white py-6 rounded-2xl font-black uppercase text-sm shadow-xl hover:bg-blue-900 transition-all">
-                  Confirmar Alterações
-                </button>
-                <button onClick={() => setProdEdit(null)} className="px-10 bg-slate-100 text-slate-400 py-6 rounded-2xl font-black uppercase text-sm hover:bg-slate-200 transition-all">
-                  Cancelar
-                </button>
-              </div>
+              <button onClick={handleSaveProduct} className="w-full bg-[#002B5B] text-white py-6 rounded-2xl font-black uppercase text-sm shadow-xl hover:bg-blue-900 transition-all">Confirmar</button>
             </div>
           </div>
         </div>
@@ -775,7 +839,7 @@ const App: React.FC = () => {
               <input type="text" value={cliEdit.nome || ''} onChange={e => setCliEdit({...cliEdit, nome: e.target.value})} placeholder="Nome" className="w-full bg-slate-50 border py-4 px-6 rounded-2xl font-bold outline-none" />
               <input type="tel" value={cliEdit.telefone || ''} onChange={e => setCliEdit({...cliEdit, telefone: e.target.value})} placeholder="WhatsApp" className="w-full bg-slate-50 border py-4 px-6 rounded-2xl font-bold outline-none" />
               <textarea value={cliEdit.endereco || ''} onChange={e => setCliEdit({...cliEdit, endereco: e.target.value})} placeholder="Endereço" className="w-full bg-slate-50 border py-4 px-6 rounded-2xl font-bold h-24 outline-none resize-none" />
-              <div className="flex gap-4"><button onClick={handleSaveCustomer} className="flex-1 bg-[#002B5B] text-white py-5 rounded-2xl font-black uppercase shadow-xl">Salvar</button><button onClick={() => setCliEdit(null)} className="px-8 bg-slate-100 text-slate-400 py-5 rounded-2xl font-black uppercase">Sair</button></div>
+              <div className="flex gap-4"><button onClick={handleSaveCustomer} className="flex-1 bg-[#002B5B] text-white py-5 rounded-2xl font-black uppercase shadow-xl hover:bg-blue-900 transition-all">Salvar</button><button onClick={() => setCliEdit(null)} className="px-8 bg-slate-100 text-slate-400 py-5 rounded-2xl font-black uppercase hover:bg-slate-200 transition-all">Sair</button></div>
             </div>
           </div>
         </div>
@@ -789,20 +853,20 @@ const App: React.FC = () => {
               <input type="text" value={entEdit.nome || ''} onChange={e => setEntEdit({...entEdit, nome: e.target.value})} placeholder="Nome" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-bold outline-none" />
               <input type="text" value={entEdit.veiculo || ''} onChange={e => setEntEdit({...entEdit, veiculo: e.target.value})} placeholder="Veículo" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-bold outline-none" />
               <input type="tel" value={entEdit.telefone || ''} onChange={e => setEntEdit({...entEdit, telefone: e.target.value.replace(/\D/g, '')})} placeholder="WhatsApp" className="w-full bg-slate-50 border-2 py-5 px-6 rounded-2xl font-bold outline-none" />
-              <div className="flex gap-4 mt-6"><button onClick={async () => { setLoading(true); await gasService.salvarEntregador(entEdit); setLoading(false); setEntEdit(null); loadData(); }} className="flex-1 bg-[#002B5B] text-white py-5 rounded-2xl font-black uppercase shadow-xl">Confirmar</button><button onClick={() => setEntEdit(null)} className="px-8 bg-slate-100 text-slate-400 py-5 rounded-2xl font-black uppercase">Cancelar</button></div>
+              <div className="flex gap-4 mt-6"><button onClick={async () => { setLoading(true); await gasService.salvarEntregador(entEdit); setLoading(false); setEntEdit(null); loadData(); }} className="flex-1 bg-[#002B5B] text-white py-5 rounded-2xl font-black uppercase shadow-xl hover:bg-blue-900 transition-all">Confirmar</button><button onClick={() => setEntEdit(null)} className="px-8 bg-slate-100 text-slate-400 py-5 rounded-2xl font-black uppercase hover:bg-slate-200 transition-all">Cancelar</button></div>
             </div>
           </div>
         </div>
       )}
 
       {loading && (
-        <div className="fixed inset-0 bg-white/40 backdrop-blur-sm z-[300] flex items-center justify-center">
+        <div className="fixed inset-0 bg-white/40 backdrop-blur-sm z-[400] flex items-center justify-center">
           <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl flex flex-col items-center gap-6 animate-pulse border border-slate-200"><div className="w-16 h-16 border-4 border-slate-100 border-t-[#002B5B] rounded-full animate-spin"></div><span className="font-black text-slate-800 uppercase text-[10px] tracking-widest">Processando...</span></div>
         </div>
       )}
 
       {message && (
-        <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[300] px-10 py-5 rounded-3xl shadow-2xl text-white font-black flex items-center gap-4 animate-in slide-in-from-bottom-10 ${message.type === 'success' ? 'bg-emerald-600' : 'bg-rose-500'}`}><i className="fas fa-check-circle text-xl"></i>{message.text}</div>
+        <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[400] px-10 py-5 rounded-3xl shadow-2xl text-white font-black flex items-center gap-4 animate-in slide-in-from-bottom-10 ${message.type === 'success' ? 'bg-emerald-600' : 'bg-rose-500'}`}><i className="fas fa-check-circle text-xl"></i>{message.text}</div>
       )}
     </div>
   );

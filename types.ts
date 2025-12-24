@@ -48,7 +48,7 @@ export interface Pedido {
 export interface Movimentacao {
   id: string;
   dataHora: string;
-  tipo: 'Entrada' | 'Saída';
+  tipo: 'Entrada' | 'Saída' | 'A Receber' | 'Liquidado';
   descricao: string;
   valor: number;
   categoria: string;
@@ -58,6 +58,7 @@ export interface Movimentacao {
 export interface ResumoFinanceiro {
   totalEntradas: number;
   totalSaidas: number;
+  totalAReceber: number;
   saldo: number;
   porMetodo: Record<string, number>;
   recentes: Movimentacao[];
@@ -67,5 +68,6 @@ export enum PaymentMethod {
   DINHEIRO = 'Dinheiro',
   PIX = 'PIX',
   CARTAO_CREDITO = 'Cartão de Crédito',
-  CARTAO_DEBITO = 'Cartão de Débito'
+  CARTAO_DEBITO = 'Cartão de Débito',
+  A_RECEBER = 'A Receber'
 }

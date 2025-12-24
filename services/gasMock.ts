@@ -93,18 +93,59 @@ export const gasService = {
       if (p) {
         p.status = s as any;
         if (s === 'Entregue') {
-          mockFinanceiro.unshift({ id: `FIN-${Date.now()}`, dataHora: new Date().toLocaleString(), tipo: 'Entrada', descricao: `Venda: ${p.nomeCliente}`, valor: p.valorTotal, categoria: 'Venda', metodo: p.formaPagamento });
+          const isAReceber = p.formaPagamento === 'A Receber';
+          mockFinanceiro.unshift({ 
+            id: `FIN-${Date.now()}`, 
+            dataHora: new Date().toLocaleString(), 
+            tipo: isAReceber ? 'A Receber' : 'Entrada', 
+            descricao: `Venda: ${p.nomeCliente}`, 
+            valor: p.valorTotal, 
+            categoria: isAReceber ? 'Venda Fiada' : 'Venda', 
+            metodo: p.formaPagamento 
+          });
         }
       }
       return { success: true }; 
     } 
   },
+  baixarPagamento: async (id: string, metodo: string) => {
+    try { return await callGAS('baixarPagamento', id, metodo); }
+    catch {
+      const idx = mockFinanceiro.findIndex(m => m.id === id);
+      if (idx !== -1) {
+        const pendente = mockFinanceiro[idx];
+        // Adiciona a entrada real
+        mockFinanceiro.unshift({
+          ...pendente,
+          id: `FIN-BAIXA-${Date.now()}`,
+          tipo: 'Entrada',
+          descricao: `[BAIXA] ${pendente.descricao}`,
+          metodo: metodo,
+          dataHora: new Date().toLocaleString()
+        });
+        // Marca o antigo como liquidado para sumir da lista de cobrança
+        mockFinanceiro[idx].tipo = 'Liquidado';
+      }
+      return { success: true };
+    }
+  },
   getResumoFinanceiro: async () => { 
     try { return await callGAS('getResumoFinanceiro'); } 
     catch { 
-      let ent = 0, sai = 0;
-      mockFinanceiro.forEach(m => { if(m.tipo === 'Entrada') ent += m.valor; else sai += m.valor; });
-      return { totalEntradas: ent, totalSaidas: sai, saldo: ent - sai, porMetodo: {}, recentes: mockFinanceiro.slice(0, 50) }; 
+      let ent = 0, sai = 0, aRec = 0;
+      mockFinanceiro.forEach(m => { 
+        if(m.tipo === 'Entrada') ent += m.valor; 
+        else if(m.tipo === 'Saída') sai += m.valor;
+        else if(m.tipo === 'A Receber') aRec += m.valor;
+      });
+      return { 
+        totalEntradas: ent, 
+        totalSaidas: sai, 
+        totalAReceber: aRec,
+        saldo: ent - sai, 
+        porMetodo: {}, 
+        recentes: mockFinanceiro.slice(0, 50) 
+      }; 
     } 
   },
   listarUltimosPedidos: async () => { try { return await callGAS('listarUltimosPedidos'); } catch { return mockPedidos.slice(0, 15); } },
