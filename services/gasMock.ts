@@ -75,7 +75,8 @@ export const gasService = {
           tipo: 'Entrada',
           descricao: `Recebimento Fiado: ${divida.descricao}`,
           valor: divida.valor,
-          categoria: 'Liquidação'
+          categoria: 'Liquidação',
+          detalhe: 'Liquidação manual via dashboard'
         });
       }
       return { success: true };
@@ -122,7 +123,8 @@ export const gasService = {
               descricao: `Venda Finalizada: ${p.nomeCliente}`, 
               valor: Number(p.valorTotal), 
               categoria: 'Venda Direta', 
-              metodo: p.formaPagamento 
+              metodo: p.formaPagamento,
+              detalhe: `Pedido ${id}`
             });
           }
         }
@@ -131,8 +133,8 @@ export const gasService = {
     }
   },
 
-  registrarMovimentacao: async (tipo: string, valor: number, descricao: string, categoria: string, metodo: string) => {
-    try { return await callGAS('registrarMovimentacao', tipo, valor, descricao, categoria, metodo); }
+  registrarMovimentacao: async (tipo: string, valor: number, descricao: string, categoria: string, metodo: string, detalhe: string = '') => {
+    try { return await callGAS('registrarMovimentacao', tipo, valor, descricao, categoria, metodo, detalhe); }
     catch {
       mockFinanceiro.unshift({
         id: `FIN-${Date.now()}`,
@@ -141,7 +143,8 @@ export const gasService = {
         descricao,
         valor,
         categoria,
-        metodo
+        metodo,
+        detalhe
       });
       return { success: true };
     }

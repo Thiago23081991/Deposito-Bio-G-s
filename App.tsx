@@ -27,7 +27,7 @@ const App: React.FC = () => {
   const [showEntregadorModal, setShowEntregadorModal] = useState(false);
   const [showProdutoModal, setShowProdutoModal] = useState(false);
   const [financeType, setFinanceType] = useState<'Entrada' | 'Saída'>('Entrada');
-  const [manualFinance, setManualFinance] = useState({ descricao: '', valor: '', categoria: '', metodo: PaymentMethod.DINHEIRO });
+  const [manualFinance, setManualFinance] = useState({ descricao: '', valor: '', categoria: '', metodo: PaymentMethod.DINHEIRO, detalhe: '' });
   const [novoEntregador, setNovoEntregador] = useState({ nome: '', telefone: '', veiculo: '' });
   const [novoProduto, setNovoProduto] = useState<Partial<Produto>>({ nome: '', preco: 0, precoCusto: 0, estoque: 0, unidadeMedida: 'unidade' });
 
@@ -202,10 +202,11 @@ const App: React.FC = () => {
         Number(manualFinance.valor),
         manualFinance.descricao,
         manualFinance.categoria,
-        manualFinance.metodo
+        manualFinance.metodo,
+        manualFinance.detalhe
       );
       setShowFinanceModal(false);
-      setManualFinance({ descricao: '', valor: '', categoria: '', metodo: PaymentMethod.DINHEIRO });
+      setManualFinance({ descricao: '', valor: '', categoria: '', metodo: PaymentMethod.DINHEIRO, detalhe: '' });
       setMessage({ type: 'success', text: 'Movimentação registrada.' });
       await loadData(true);
     } catch {
@@ -728,7 +729,7 @@ const App: React.FC = () => {
                 </div>
                 <table className="w-full text-left">
                   <thead className="bg-slate-50 border-b">
-                    <tr>{['Data', 'Tipo', 'Descrição', 'Valor'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>)}</tr>
+                    <tr>{['Data', 'Tipo', 'Descrição', 'Valor', 'Observações'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {(resumo?.recentes || []).map(m => (
@@ -737,6 +738,7 @@ const App: React.FC = () => {
                         <td className="px-8 py-6"><span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-tighter ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-700' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-700' : 'bg-orange-100 text-orange-700'}`}>{m.tipo}</span></td>
                         <td className="px-8 py-6 text-sm font-black text-slate-800">{m.descricao}</td>
                         <td className={`px-8 py-6 font-black text-base ${m.tipo === 'Saída' ? 'text-rose-600' : 'text-slate-900'}`}>R$ {m.valor.toFixed(2)}</td>
+                        <td className="px-8 py-6 text-[10px] font-medium text-slate-400 italic max-w-xs truncate">{m.detalhe || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -826,9 +828,24 @@ const App: React.FC = () => {
               <button onClick={() => setShowFinanceModal(false)} className="text-2xl">&times;</button>
             </div>
             <form onSubmit={handleSaveManualFinance} className="p-8 space-y-5">
-              <input required className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-sm" placeholder="Descrição da operação" value={manualFinance.descricao} onChange={e => setManualFinance({...manualFinance, descricao: e.target.value})} />
-              <input required type="number" step="0.01" className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-sm" placeholder="Valor (R$)" value={manualFinance.valor} onChange={e => setManualFinance({...manualFinance, valor: e.target.value})} />
-              <button className={`w-full py-5 ${financeType === 'Entrada' ? 'bg-emerald-600' : 'bg-rose-600'} text-white font-black rounded-3xl uppercase text-[11px] shadow-xl`}>Confirmar Lançamento</button>
+              <div className="space-y-1">
+                <p className="text-[9px] font-black text-slate-400 uppercase ml-2 mb-1">Descrição</p>
+                <input required className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-sm focus:ring-2 focus:ring-blue-500" placeholder="Ex: Venda de botijão, Pagamento de luz" value={manualFinance.descricao} onChange={e => setManualFinance({...manualFinance, descricao: e.target.value})} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[9px] font-black text-slate-400 uppercase ml-2 mb-1">Valor (R$)</p>
+                <input required type="number" step="0.01" className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-sm focus:ring-2 focus:ring-blue-500" placeholder="0.00" value={manualFinance.valor} onChange={e => setManualFinance({...manualFinance, valor: e.target.value})} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[9px] font-black text-slate-400 uppercase ml-2 mb-1">Detalhes Adicionais</p>
+                <textarea 
+                  className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-sm focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-none" 
+                  placeholder="Informações extras para o fechamento de mês..." 
+                  value={manualFinance.detalhe} 
+                  onChange={e => setManualFinance({...manualFinance, detalhe: e.target.value})} 
+                />
+              </div>
+              <button className={`w-full py-5 ${financeType === 'Entrada' ? 'bg-emerald-600' : 'bg-rose-600'} text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:opacity-90 transition-opacity`}>Confirmar Lançamento</button>
             </form>
           </div>
         </div>

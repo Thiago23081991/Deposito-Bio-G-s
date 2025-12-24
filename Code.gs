@@ -1,6 +1,6 @@
 
 /**
- * SISTEMA BIO GÁS PRO - BACKEND V8.2
+ * SISTEMA BIO GÁS PRO - BACKEND V8.3
  * Gestão de Cobrança, Equipe, Lançamentos e Importação
  */
 
@@ -23,7 +23,7 @@ function getSheet(name) {
       'Produtos': ['ID', 'Nome_Produto', 'Preço', 'Estoque_Cheio', 'Unidade_Medida', 'Preco_Custo'],
       'Entregadores': ['ID', 'Nome', 'Status', 'Telefone', 'Veiculo'],
       'Pedidos': ['ID_Pedido', 'Data_Hora', 'Nome_Cliente', 'Telefone_Cliente', 'Endereço', 'Itens_JSON', 'Valor_Total', 'Entregador', 'Status', 'Forma_Pagamento'],
-      'Financeiro': ['ID', 'Data_Hora', 'Tipo', 'Descrição', 'Valor', 'Categoria', 'Metodo']
+      'Financeiro': ['ID', 'Data_Hora', 'Tipo', 'Descrição', 'Valor', 'Categoria', 'Metodo', 'Detalhe']
     };
     if (headers[name]) sheet.appendRow(headers[name]);
   }
@@ -88,7 +88,7 @@ function atualizarStatusPedidosEmMassa(ids, novoStatus) {
         const formaPgto = data[i][9];
         const tipo = (formaPgto === 'A Receber') ? 'A Receber' : 'Entrada';
         const categoria = (formaPgto === 'A Receber') ? 'Venda Fiada' : 'Venda Direta';
-        registrarMovimentacao(tipo, valor, "Venda Finalizada: " + cliente, categoria, formaPgto);
+        registrarMovimentacao(tipo, valor, "Venda Finalizada: " + cliente, categoria, formaPgto, "Pedido ID: " + data[i][0]);
       }
       count++;
     }
@@ -105,7 +105,7 @@ function liquidarDivida(financeiroId) {
       sheet.getRange(i + 1, 3).setValue('Liquidado');
       const valor = data[i][4];
       const desc = "Recebimento Fiado: " + data[i][3].replace("Venda Finalizada: ", "");
-      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', 'BAIXA MANUAL');
+      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', 'BAIXA MANUAL', "Liquidação da pendência " + financeiroId);
       return { success: true };
     }
   }
@@ -113,11 +113,11 @@ function liquidarDivida(financeiroId) {
 }
 
 // --- SERVIÇOS FINANCEIROS ---
-function registrarMovimentacao(tipo, valor, descricao, categoria, metodo = '-') {
+function registrarMovimentacao(tipo, valor, descricao, categoria, metodo = '-', detalhe = '') {
   const sheet = getSheet('Financeiro');
   const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy HH:mm");
   const id = "FIN-" + Date.now();
-  sheet.appendRow([id, timestamp, tipo, descricao, Number(valor), categoria, metodo]);
+  sheet.appendRow([id, timestamp, tipo, descricao, Number(valor), categoria, metodo, detalhe]);
   return true;
 }
 
@@ -132,7 +132,8 @@ function getResumoFinanceiro() {
       else if (tipo === 'A Receber') arec += valor;
       recentes.push({
         id: data[i][0], dataHora: data[i][1], tipo: tipo,
-        descricao: data[i][3], valor: valor, categoria: data[i][5], metodo: data[i][6]
+        descricao: data[i][3], valor: valor, categoria: data[i][5], 
+        metodo: data[i][6], detalhe: data[i][7] || ''
       });
     }
   }

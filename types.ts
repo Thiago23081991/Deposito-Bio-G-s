@@ -55,6 +55,7 @@ export interface Movimentacao {
   valor: number;
   categoria: string;
   metodo?: string;
+  detalhe?: string;
 }
 
 export interface ResumoFinanceiro {
