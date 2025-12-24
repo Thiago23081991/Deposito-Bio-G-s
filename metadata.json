@@ -1,0 +1,7 @@
+{
+  "name": "Bio Gás Express - Gestão de Entregas",
+  "description": "Um sistema completo e responsivo para gestão de pedidos de gás, com busca de clientes por telefone, cálculo automático de valores e integração com Google Sheets.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
