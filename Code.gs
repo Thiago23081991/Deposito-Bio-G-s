@@ -28,9 +28,32 @@ function getSheet(name) {
 
 function listarClientes() {
   const data = getSheet('Clientes').getDataRange().getValues();
+  if (data.length <= 1) return [];
   return data.slice(1).map(r => ({
     id: r[0], telefone: String(r[1]), nome: r[2], endereco: r[3], bairro: r[4], referencia: r[5], dataCadastro: r[6]
   })).reverse();
+}
+
+function salvarClientesEmMassa(lista) {
+  const sheet = getSheet('Clientes');
+  const data = sheet.getDataRange().getValues();
+  const existingTels = new Set(data.map(r => String(r[1]).replace(/\D/g, '')));
+  const rowsToAdd = [];
+  const dataCad = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy");
+
+  lista.forEach(dados => {
+    const cleanTel = String(dados.telefone).replace(/\D/g, '');
+    if (!existingTels.has(cleanTel)) {
+      const id = "CLI-" + Math.floor(Math.random() * 90000 + 10000);
+      rowsToAdd.push([id, cleanTel, dados.nome, dados.endereco, dados.bairro || '', dados.referencia || '', dataCad]);
+      existingTels.add(cleanTel); // Evitar duplicados dentro do próprio lote
+    }
+  });
+
+  if (rowsToAdd.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, 7).setValues(rowsToAdd);
+  }
+  return { success: true, count: rowsToAdd.length };
 }
 
 function buscarClientePorTelefone(telefone) {
@@ -150,7 +173,6 @@ function salvarPedido(dados) {
   const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy HH:mm:ss");
   const idPedido = "PED-" + Math.floor(Math.random() * 90000 + 10000);
   
-  // Criar sumário amigável para a planilha
   const summary = dados.itens.map(it => it.qtd + "x " + it.nome).join(", ");
   
   sheetPedidos.appendRow([
@@ -166,7 +188,6 @@ function salvarPedido(dados) {
     dados.formaPagamento
   ]);
   
-  // Descontar estoque de cada item
   const sheetProdutos = getSheet('Produtos');
   const prodData = sheetProdutos.getDataRange().getValues();
   dados.itens.forEach(item => {
@@ -187,11 +208,11 @@ function atualizarStatusPedido(idPedido, novoStatus) {
     const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] === idPedido) {
-        sheet.getRange(i + 1, 9).setValue(novoStatus); // Coluna Status
+        sheet.getRange(i + 1, 9).setValue(novoStatus); 
         if (novoStatus === 'Entregue') {
-          const valor = data[i][6]; // Valor Total
-          const desc = "Venda: " + data[i][2]; // Cliente
-          const metodo = data[i][9]; // Forma Pgto
+          const valor = data[i][6]; 
+          const desc = "Venda: " + data[i][2]; 
+          const metodo = data[i][9]; 
           registrarMovimentacao('Entrada', valor, desc, 'Venda', metodo);
         }
         return { success: true };
@@ -227,7 +248,6 @@ function getResumoFinanceiro() {
 function listarUltimosPedidos() {
   const data = getSheet('Pedidos').getDataRange().getValues();
   if (data.length <= 1) return [];
-  // Para compatibilidade, convertemos o sumário de volta para o formato esperado pelo app
   return data.slice(1).map(r => ({
     id: r[0],
     dataHora: r[1],
@@ -235,7 +255,7 @@ function listarUltimosPedidos() {
     telefoneCliente: r[3],
     endereco: r[4],
     produtoSummary: r[5],
-    itens: [], // No mock/GAS real poderíamos salvar o JSON completo, mas o summary resolve para listagem
+    itens: [], 
     valorTotal: r[6],
     entregador: r[7],
     status: r[8],

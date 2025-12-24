@@ -20,8 +20,8 @@ export interface Entregador {
   id: string;
   nome: string;
   status: 'Ativo' | 'Inativo';
-  telefone?: string;
-  veiculo?: string;
+  telefone: string; // WhatsApp
+  veiculo: string;  // Moto
 }
 
 export interface PedidoItem {
@@ -39,10 +39,9 @@ export interface Pedido {
   endereco: string;
   itens: PedidoItem[];
   valorTotal: number;
-  entregador: string;
+  entregador: string; // Nome do entregador
   status: 'Pendente' | 'Em Rota' | 'Entregue' | 'Cancelado';
   formaPagamento: string;
-  // Campos auxiliares para compatibilidade com planilhas antigas (se necessário)
   produtoSummary?: string; 
 }
 
