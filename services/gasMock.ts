@@ -33,9 +33,38 @@ let mockFinanceiro: Movimentacao[] = [];
 
 export const gasService = {
   listarClientes: async () => { try { return await callGAS('listarClientes'); } catch { return [...mockClientes]; } },
-  buscarClientePorTelefone: async (t: string) => { try { return await callGAS('buscarClientePorTelefone', t); } catch { return mockClientes.find(c => c.telefone.includes(t)) || null; } },
   
   listarProdutos: async () => { try { return await callGAS('listarProdutos'); } catch { return [...mockProdutos]; } },
+  salvarProduto: async (p: any) => {
+    try { return await callGAS('salvarProduto', p); }
+    catch {
+      const idx = mockProdutos.findIndex(item => item.id === p.id);
+      if(idx !== -1) mockProdutos[idx] = p;
+      else mockProdutos.push({...p, id: "PRD-"+Date.now()});
+      return { success: true };
+    }
+  },
+
+  liquidarDivida: async (id: string) => {
+    try { return await callGAS('liquidarDivida', id); }
+    catch {
+      const idx = mockFinanceiro.findIndex(m => m.id === id);
+      if(idx !== -1) {
+        const divida = mockFinanceiro[idx];
+        divida.tipo = 'Liquidado';
+        mockFinanceiro.unshift({
+          id: `FIN-${Date.now()}`,
+          dataHora: new Date().toLocaleDateString(),
+          tipo: 'Entrada',
+          descricao: `Recebimento Fiado: ${divida.descricao}`,
+          valor: divida.valor,
+          categoria: 'Liquidação'
+        });
+      }
+      return { success: true };
+    }
+  },
+
   listarEntregadores: async () => { try { return await callGAS('listarEntregadores'); } catch { return [...mockEntregadores]; } },
   
   salvarPedido: async (d: any) => { 
@@ -48,26 +77,31 @@ export const gasService = {
   },
   
   atualizarStatusPedido: async (id: string, s: string) => { 
-    try { return await callGAS('atualizarStatusPedido', id, s); } 
-    catch { 
-      const p = mockPedidos.find(p => p.id === id);
-      if (p) {
-        p.status = s as any;
-        if (s === 'Entregue') {
-          const isAReceber = p.formaPagamento === 'A Receber';
-          mockFinanceiro.unshift({ 
-            id: `FIN-${Date.now()}`, 
-            dataHora: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(), 
-            tipo: isAReceber ? 'A Receber' : 'Entrada', 
-            descricao: `Venda Finalizada: ${p.nomeCliente}`, 
-            valor: Number(p.valorTotal), 
-            categoria: isAReceber ? 'Venda Fiada' : 'Venda Direta', 
-            metodo: p.formaPagamento 
-          });
+    return gasService.atualizarStatusPedidosEmMassa([id], s);
+  },
+
+  atualizarStatusPedidosEmMassa: async (ids: string[], s: string) => {
+    try { return await callGAS('atualizarStatusPedidosEmMassa', ids, s); }
+    catch {
+      ids.forEach(id => {
+        const p = mockPedidos.find(p => p.id === id);
+        if (p) {
+          p.status = s as any;
+          if (s === 'Entregue') {
+            mockFinanceiro.unshift({ 
+              id: `FIN-${Date.now()}`, 
+              dataHora: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(), 
+              tipo: p.formaPagamento === 'A Receber' ? 'A Receber' : 'Entrada', 
+              descricao: `Venda Finalizada: ${p.nomeCliente}`, 
+              valor: Number(p.valorTotal), 
+              categoria: 'Venda Direta', 
+              metodo: p.formaPagamento 
+            });
+          }
         }
-      }
-      return { success: true }; 
-    } 
+      });
+      return { success: true, count: ids.length };
+    }
   },
   
   getResumoFinanceiro: async () => { 
@@ -79,14 +113,7 @@ export const gasService = {
         else if(m.tipo === 'Saída') sai += m.valor;
         else if(m.tipo === 'A Receber') aRec += m.valor;
       });
-      return { 
-        totalEntradas: ent, 
-        totalSaidas: sai, 
-        totalAReceber: aRec,
-        saldo: ent - sai, 
-        porMetodo: {}, 
-        recentes: mockFinanceiro.slice(0, 50) 
-      }; 
+      return { totalEntradas: ent, totalSaidas: sai, totalAReceber: aRec, saldo: ent - sai, porMetodo: {}, recentes: mockFinanceiro.slice(0, 50) }; 
     } 
   },
   

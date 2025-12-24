@@ -20,8 +20,8 @@ export interface Entregador {
   id: string;
   nome: string;
   status: 'Ativo' | 'Inativo';
-  telefone: string; // WhatsApp
-  veiculo: string;  // Moto
+  telefone: string;
+  veiculo: string;
 }
 
 export interface PedidoItem {
@@ -39,7 +39,7 @@ export interface Pedido {
   endereco: string;
   itens: PedidoItem[];
   valorTotal: number;
-  entregador: string; // Nome do entregador
+  entregador: string;
   status: 'Pendente' | 'Em Rota' | 'Entregue' | 'Cancelado';
   formaPagamento: string;
   produtoSummary?: string; 
@@ -75,5 +75,4 @@ export enum PaymentMethod {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
-  links?: { title: string; uri: string }[];
 }
