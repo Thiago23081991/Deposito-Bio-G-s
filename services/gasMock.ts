@@ -62,8 +62,8 @@ export const gasService = {
     }
   },
 
-  liquidarDivida: async (id: string) => {
-    try { return await callGAS('liquidarDivida', id); }
+  liquidarDivida: async (id: string, metodo: string) => {
+    try { return await callGAS('liquidarDivida', id, metodo); }
     catch {
       const idx = mockFinanceiro.findIndex(m => m.id === id);
       if(idx !== -1) {
@@ -76,6 +76,7 @@ export const gasService = {
           descricao: `Recebimento Fiado: ${divida.descricao}`,
           valor: divida.valor,
           categoria: 'Liquidação',
+          metodo: metodo || 'Dinheiro',
           detalhe: 'Liquidação manual via dashboard'
         });
       }

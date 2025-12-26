@@ -97,15 +97,17 @@ function atualizarStatusPedidosEmMassa(ids, novoStatus) {
 }
 
 // --- GESTÃO DE COBRANÇA ---
-function liquidarDivida(financeiroId) {
+function liquidarDivida(financeiroId, metodoPagamento) {
   const sheet = getSheet('Financeiro');
   const data = sheet.getDataRange().getValues();
+  const metodo = metodoPagamento || 'BAIXA MANUAL';
+
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(financeiroId)) {
       sheet.getRange(i + 1, 3).setValue('Liquidado');
       const valor = data[i][4];
       const desc = "Recebimento Fiado: " + data[i][3].replace("Venda Finalizada: ", "");
-      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', 'BAIXA MANUAL', "Liquidação da pendência " + financeiroId);
+      registrarMovimentacao('Entrada', valor, desc, 'Liquidação de Dívida', metodo, "Liquidação da pendência " + financeiroId);
       return { success: true };
     }
   }
@@ -137,7 +139,7 @@ function getResumoFinanceiro() {
       });
     }
   }
-  return { totalEntradas: ent, totalSaidas: sai, totalAReceber: arec, saldo: ent - sai, recentes: recentes.reverse() };
+  return { totalEntradas: ent, totalSaidas: sai, totalAReceber: arec, saldo: ent - sai, porMetodo: {}, recentes: recentes.reverse() };
 }
 
 function gerarRelatorioMensal() {

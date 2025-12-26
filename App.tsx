@@ -23,6 +23,9 @@ const App: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('Todos');
   const [searchTermCRM, setSearchTermCRM] = useState('');
 
+  // --- SELEÇÃO EM MASSA FINANCEIRO ---
+  const [selectedMovimentacaoIds, setSelectedMovimentacaoIds] = useState<string[]>([]);
+
   // --- MODAIS ---
   const [showEntregadorModal, setShowEntregadorModal] = useState(false);
   const [novoEntregador, setNovoEntregador] = useState({ id: '', nome: '', telefone: '', veiculo: '', status: 'Ativo' as 'Ativo' | 'Inativo' });
@@ -31,6 +34,11 @@ const App: React.FC = () => {
   const [showFinanceiroModal, setShowFinanceiroModal] = useState(false);
   const [movimentacaoForm, setMovimentacaoForm] = useState({ tipo: 'Entrada', descricao: '', valor: '', categoria: 'Geral' });
   
+  // --- MODAL BAIXA DÍVIDA ---
+  const [showBaixaModal, setShowBaixaModal] = useState(false);
+  const [selectedDivida, setSelectedDivida] = useState<Movimentacao | null>(null);
+  const [metodoBaixa, setMetodoBaixa] = useState<string>('Dinheiro');
+
   // --- MODAL RELATÓRIO ---
   const [showRelatorioModal, setShowRelatorioModal] = useState(false);
   const [relatorio, setRelatorio] = useState<RelatorioMensal | null>(null);
@@ -56,6 +64,42 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ESTOQUE_MINIMO = 10;
   const produtosEstoqueBaixo = useMemo(() => produtos.filter(p => p.estoque < ESTOQUE_MINIMO), [produtos]);
+
+  // --- FLUXO DE CAIXA DIÁRIO ---
+  const fluxoCaixaDiario = useMemo(() => {
+     const grupos: Record<string, { entradas: number; saidas: number }> = {};
+     (resumo?.recentes || []).forEach(m => {
+        // Assume formato dd/mm/yyyy hh:mm ou similar, pega apenas a data
+        const data = m.dataHora.split(' ')[0];
+        if (!grupos[data]) grupos[data] = { entradas: 0, saidas: 0 };
+        
+        if (m.tipo === 'Entrada') grupos[data].entradas += m.valor;
+        if (m.tipo === 'Saída') grupos[data].saidas += m.valor;
+     });
+
+     return Object.entries(grupos)
+        .map(([data, vals]) => ({
+            data,
+            ...vals,
+            saldo: vals.entradas - vals.saidas
+        }))
+        .sort((a, b) => {
+           // Ordena por data decrescente
+           const [da, ma, ya] = a.data.split('/').map(Number);
+           const [db, mb, yb] = b.data.split('/').map(Number);
+           return new Date(yb, mb - 1, db).getTime() - new Date(ya, ma - 1, da).getTime();
+        });
+  }, [resumo]);
+
+  // --- CÁLCULO TOTAL SELEÇÃO FINANCEIRA ---
+  const totalSelecionadoFinanceiro = useMemo(() => {
+    if (!resumo?.recentes) return 0;
+    return resumo.recentes
+      .filter(m => selectedMovimentacaoIds.includes(m.id))
+      .reduce((acc, curr) => {
+        return acc + curr.valor; 
+      }, 0);
+  }, [resumo, selectedMovimentacaoIds]);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -94,6 +138,30 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // --- EXPORTAR SELEÇÃO FINANCEIRA ---
+  const handleExportMovimentacoes = () => {
+    if (selectedMovimentacaoIds.length === 0) return;
+    
+    const selectedItems = resumo?.recentes.filter(m => selectedMovimentacaoIds.includes(m.id)) || [];
+    
+    const dataToExport = selectedItems.map(item => ({
+      Data: item.dataHora,
+      Tipo: item.tipo,
+      Descrição: item.descricao,
+      Categoria: item.categoria,
+      Valor: item.valor,
+      Detalhes: item.detalhe || ''
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Seleção Financeira");
+    XLSX.writeFile(wb, "movimentacoes_selecionadas.xlsx");
+    
+    setMessage({ type: 'success', text: 'Arquivo exportado com sucesso!' });
+    setSelectedMovimentacaoIds([]);
   };
 
   // --- IMPRESSÃO DE RECIBO ---
@@ -189,9 +257,9 @@ const App: React.FC = () => {
     msg += `✅ _Obrigado pela preferência!_`;
     
     const phone = telBusca ? telBusca.replace(/\D/g, '') : '';
-    // Se tiver telefone, abre direto a conversa, senão abre seleção de contato
+    // Se tiver telefone, abre direto a conversa com o prefixo 55, senão abre seleção de contato
     const url = phone 
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+      ? `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`
       : `https://wa.me/?text=${encodeURIComponent(msg)}`;
       
     window.open(url, '_blank');
@@ -248,13 +316,25 @@ const App: React.FC = () => {
     setLoading(true);
     try {
       await gasService.atualizarStatusPedidosEmMassa(ids, novoStatus);
+      
       if (novoStatus === 'Em Rota') {
         const orders = pedidos.filter(p => ids.includes(p.id));
-        let summary = `*🚚 BIO GÁS - ROTA DE ENTREGA*\n\n`;
-        orders.forEach((o, i) => summary += `*${i+1}. ${o.nomeCliente}*\n📍 ${o.endereco}\n💰 *R$ ${Number(o.valorTotal).toFixed(2)}*\n\n`);
-        window.open(`https://wa.me/?text=${encodeURIComponent(summary)}`, '_blank');
+        
+        // Solicita previsão de chegada
+        const eta = window.prompt("🚚 Saiu para entrega!\n\nInforme a previsão de chegada para enviar ao cliente:", "15-30 minutos");
+        
+        if (eta) {
+          orders.forEach(o => {
+            if (!o.telefoneCliente) return;
+            
+            const msg = `*🚚 PEDIDO A CAMINHO!* \n\nOlá *${o.nomeCliente}*, seu pedido Bio Gás já saiu para entrega!\n\n🛵 Entregador: *${o.entregador || 'Equipe Bio Gás'}*\n⏱️ Previsão: *${eta}*\n\nFique atento(a) à campainha! 😉`;
+            
+            window.open(`https://wa.me/55${o.telefoneCliente.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+          });
+        }
       }
-      setMessage({ type: 'success', text: 'Logística atualizada!' });
+      
+      setMessage({ type: 'success', text: 'Status atualizado e clientes notificados!' });
       setSelectedOrderIds([]);
       await loadData(true);
     } finally { setLoading(false); }
@@ -460,7 +540,7 @@ const App: React.FC = () => {
                 const handleCobrar = () => {
                    if (clienteObj) {
                       const msg = `Oie *${clienteObj.nome}*, tudo bom?\n\nPassando rapidinho só para lembrar daquele valor de *R$ ${m.valor.toFixed(2)}* referente à Bio Gás. Conseguimos agendar uma data para o pagamento?\n\nObrigado(a) e uma ótima semana!`;
-                      window.open(`https://wa.me/${clienteObj.telefone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      window.open(`https://wa.me/55${clienteObj.telefone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                    } else {
                       setMessage({ type: 'error', text: 'Telefone do cliente não encontrado no CRM para cobrar.' });
                    }
@@ -477,11 +557,10 @@ const App: React.FC = () => {
                         <button onClick={handleCobrar} className="px-4 py-2 bg-emerald-100 text-emerald-600 text-[9px] font-black uppercase rounded-xl hover:bg-emerald-600 hover:text-white transition flex items-center gap-1">
                           <i className="fab fa-whatsapp text-xs"></i> Cobrar
                         </button>
-                        <button onClick={async () => {
-                          setLoading(true);
-                          await gasService.liquidarDivida(m.id);
-                          await loadData(true);
-                          setMessage({ type: 'success', text: 'Dívida Liquidada!' });
+                        <button onClick={() => {
+                          setSelectedDivida(m);
+                          setMetodoBaixa('Dinheiro');
+                          setShowBaixaModal(true);
                         }} className="px-4 py-2 bg-emerald-500 text-white text-[9px] font-black uppercase rounded-xl hover:bg-emerald-600 transition">Dar Baixa</button>
                       </div>
                     </td>
@@ -531,7 +610,7 @@ const App: React.FC = () => {
                           </div>
                           <button onClick={() => {
                             const msg = mktMessage.replace(/\[nome\]/gi, c.nome);
-                            window.open(`https://wa.me/${c.telefone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                            window.open(`https://wa.me/55${c.telefone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                           }} disabled={!mktMessage.trim()} className="px-6 py-3 bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase rounded-2xl hover:bg-emerald-600 hover:text-white transition-all disabled:opacity-20 flex items-center gap-2"><i className="fab fa-whatsapp text-lg"></i> Disparar</button>
                        </div>
                     ))}
@@ -552,15 +631,18 @@ const App: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
          {entregadores.map(e => (
             <div key={e.id} className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl hover:shadow-2xl transition-all group">
-               <div className="flex items-center gap-4 mb-6">
-                  <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl group-hover:bg-blue-600 group-hover:text-white transition-all"><i className="fas fa-motorcycle"></i></div>
-                  <div><h4 className="font-black text-slate-800 text-lg uppercase tracking-tight">{e.nome}</h4><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${e.status === 'Ativo' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>{e.status}</span></div>
+               <div className="flex justify-between items-start mb-6">
+                  <div className="flex items-center gap-4">
+                     <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl group-hover:bg-blue-600 group-hover:text-white transition-all"><i className="fas fa-motorcycle"></i></div>
+                     <div><h4 className="font-black text-slate-800 text-lg uppercase tracking-tight">{e.nome}</h4><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${e.status === 'Ativo' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>{e.status}</span></div>
+                  </div>
+                  <button onClick={() => { setNovoEntregador(e); setShowEntregadorModal(true); }} className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 hover:bg-blue-600 hover:text-white transition flex items-center justify-center"><i className="fas fa-pen text-xs"></i></button>
                </div>
                <div className="space-y-3 mb-6">
                   <div className="flex justify-between text-xs font-bold text-slate-400 uppercase tracking-tight"><span>Veículo</span><span className="text-slate-800">{e.veiculo}</span></div>
                   <div className="flex justify-between text-xs font-bold text-slate-400 uppercase tracking-tight"><span>WhatsApp</span><span className="text-blue-600">{e.telefone}</span></div>
                </div>
-               <button onClick={() => window.open(`https://wa.me/${e.telefone.replace(/\D/g,'')}`, '_blank')} className="w-full py-3 bg-emerald-50 text-emerald-600 rounded-2xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all">WhatsApp do Motorista</button>
+               <button onClick={() => window.open(`https://wa.me/55${e.telefone.replace(/\D/g,'')}`, '_blank')} className="w-full py-3 bg-emerald-50 text-emerald-600 rounded-2xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all">WhatsApp do Motorista</button>
             </div>
          ))}
       </div>
@@ -607,9 +689,23 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-[#F8FAFC] pb-16 font-sans">
       <header className="bg-white border-b sticky top-0 z-40 shadow-sm backdrop-blur-lg bg-white/80">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 w-11 h-11 rounded-2xl text-white flex items-center justify-center font-black text-2xl shadow-xl shadow-blue-200">B</div>
-            <div><h1 className="text-xl font-black text-slate-900 tracking-tight leading-none italic">BIO GÁS <span className="text-blue-600 not-italic">PRO</span></h1><p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">SISTEMA DE GESTÃO INTEGRADA</p></div>
+          <div className="flex items-center gap-4">
+            <div className="relative group cursor-pointer">
+              <div className="absolute -inset-2 bg-gradient-to-r from-yellow-400 to-blue-600 rounded-full blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+              <img 
+                 src="https://cdn-icons-png.flaticon.com/512/3313/3313460.png" 
+                 alt="Bio Gás Logo" 
+                 className="h-14 w-14 object-contain relative z-10 transition-transform group-hover:scale-110" 
+              />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tighter leading-none italic flex items-center">
+                <span className="text-[#FFC107] drop-shadow-sm mr-1">BIO</span>
+                <span className="text-[#0056b3] drop-shadow-sm">GÁS</span>
+                <span className="ml-2 bg-blue-600 text-white text-[9px] px-2 py-0.5 rounded-full not-italic font-bold tracking-wider shadow-sm shadow-blue-200">PRO</span>
+              </h1>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em] mt-1 pl-0.5">Gestão Inteligente</p>
+            </div>
           </div>
           <div className="flex gap-10">
             <div className="text-right"><p className="text-[9px] text-slate-400 font-black uppercase mb-1">Caixa Geral</p><p className="font-black text-lg text-slate-900 tracking-tighter">R$ {(resumo?.totalEntradas || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
@@ -694,17 +790,73 @@ const App: React.FC = () => {
                   </div>
                 ))}
              </div>
+
+             {/* FLUXO DIÁRIO */}
              <div className="bg-white rounded-[40px] shadow-xl border border-slate-100 overflow-hidden">
                 <div className="p-8 border-b flex justify-between items-center bg-slate-50/30">
-                  <h3 className="font-black text-slate-800 uppercase text-[10px]">Movimentações Recentes</h3>
+                   <h3 className="font-black text-slate-800 uppercase text-[10px]">Fluxo de Caixa Diário</h3>
+                </div>
+                <table className="w-full text-left">
+                   <thead className="bg-slate-50 border-b">
+                      <tr>{['Data', 'Entradas', 'Saídas', 'Saldo do Dia'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase">{h}</th>)}</tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                      {fluxoCaixaDiario.map((row, i) => (
+                         <tr key={i} className="hover:bg-slate-50/30 transition-colors">
+                            <td className="px-8 py-6 text-[10px] font-black text-slate-400">{row.data}</td>
+                            <td className="px-8 py-6 font-black text-emerald-600">R$ {row.entradas.toFixed(2)}</td>
+                            <td className="px-8 py-6 font-black text-rose-600">R$ {row.saidas.toFixed(2)}</td>
+                            <td className={`px-8 py-6 font-black ${row.saldo >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>R$ {row.saldo.toFixed(2)}</td>
+                         </tr>
+                      ))}
+                      {(!fluxoCaixaDiario || fluxoCaixaDiario.length === 0) && <tr><td colSpan={4} className="p-10 text-center font-black text-slate-300 text-xs uppercase">Sem movimentações</td></tr>}
+                   </tbody>
+                </table>
+             </div>
+
+             <div className="bg-white rounded-[40px] shadow-xl border border-slate-100 overflow-hidden relative">
+                {selectedMovimentacaoIds.length > 0 && (
+                  <div className="absolute top-0 left-0 w-full bg-slate-900 p-4 z-20 flex justify-between items-center animate-in slide-in-from-top-4">
+                    <div className="flex items-center gap-4">
+                      <span className="text-white font-black text-[10px] uppercase tracking-widest">{selectedMovimentacaoIds.length} Selecionados</span>
+                      <span className="text-emerald-400 font-black text-[12px]">Soma: R$ {totalSelecionadoFinanceiro.toFixed(2)}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleExportMovimentacoes} className="px-4 py-2 bg-emerald-500 text-white text-[10px] font-black rounded-lg uppercase flex items-center gap-2"><i className="fas fa-file-excel"></i> Exportar Seleção</button>
+                      <button onClick={() => setSelectedMovimentacaoIds([])} className="ml-2 text-white/50 text-xl">×</button>
+                    </div>
+                  </div>
+                )}
+                <div className="p-8 border-b flex justify-between items-center bg-slate-50/30">
+                  <h3 className="font-black text-slate-800 uppercase text-[10px]">Movimentações Detalhadas</h3>
                 </div>
                 <table className="w-full text-left">
                   <thead className="bg-slate-50 border-b">
-                    <tr>{['Data', 'Tipo', 'Descrição', 'Valor', 'Observações'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase">{h}</th>)}</tr>
+                    <tr>
+                      <th className="px-8 py-6 w-10">
+                        <input 
+                          type="checkbox" 
+                          className="w-4 h-4 rounded text-blue-600 cursor-pointer"
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const allIds = resumo?.recentes.map(m => m.id) || [];
+                              setSelectedMovimentacaoIds(allIds);
+                            } else {
+                              setSelectedMovimentacaoIds([]);
+                            }
+                          }}
+                          checked={resumo?.recentes && resumo.recentes.length > 0 && selectedMovimentacaoIds.length === resumo.recentes.length}
+                        />
+                      </th>
+                      {['Data', 'Tipo', 'Descrição', 'Valor', 'Observações'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase">{h}</th>)}
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {(resumo?.recentes || []).map(m => (
-                      <tr key={m.id} className="hover:bg-slate-50/30 transition-colors">
+                      <tr key={m.id} className={`hover:bg-slate-50/30 transition-colors cursor-pointer ${selectedMovimentacaoIds.includes(m.id) ? 'bg-blue-50/50' : ''}`} onClick={() => setSelectedMovimentacaoIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}>
+                        <td className="px-8 py-6" onClick={e => e.stopPropagation()}>
+                           <input type="checkbox" checked={selectedMovimentacaoIds.includes(m.id)} onChange={() => setSelectedMovimentacaoIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])} className="w-4 h-4 rounded text-blue-600 cursor-pointer" />
+                        </td>
                         <td className="px-8 py-6 text-[10px] font-black text-slate-400">{m.dataHora}</td>
                         <td className="px-8 py-6"><span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-tighter ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-700' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-700' : m.tipo === 'Liquidado' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{m.tipo}</span></td>
                         <td className="px-8 py-6 text-sm font-black text-slate-800 uppercase">{m.descricao}</td>
@@ -719,11 +871,48 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* MODAL BAIXA DÍVIDA */}
+      {showBaixaModal && selectedDivida && (
+         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
+           <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
+             <div className="p-6 bg-emerald-500 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">Receber Conta</h3><button onClick={() => setShowBaixaModal(false)} className="text-2xl">&times;</button></div>
+             <div className="p-8 space-y-6">
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase">Cliente</p>
+                  <p className="text-sm font-black text-slate-800">{selectedDivida.descricao}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase">Valor a Receber</p>
+                  <p className="text-3xl font-black text-emerald-600">R$ {selectedDivida.valor.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Forma de Pagamento</p>
+                  <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-600" value={metodoBaixa} onChange={e => setMetodoBaixa(e.target.value)}>
+                     <option value="Dinheiro">Dinheiro</option>
+                     <option value="PIX">PIX</option>
+                     <option value="Cartão de Débito">Cartão de Débito</option>
+                     <option value="Cartão de Crédito">Cartão de Crédito</option>
+                  </select>
+                </div>
+                <button onClick={async () => {
+                   setLoading(true);
+                   try {
+                     await gasService.liquidarDivida(selectedDivida.id, metodoBaixa);
+                     setShowBaixaModal(false);
+                     await loadData(true);
+                     setMessage({ type: 'success', text: 'Recebimento confirmado e lançado no caixa!' });
+                   } finally { setLoading(false); }
+                }} className="w-full py-5 bg-emerald-500 text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:bg-emerald-600 transition-all">Confirmar Recebimento</button>
+             </div>
+           </div>
+         </div>
+      )}
+
       {/* MODAL ENTREGADOR */}
       {showEntregadorModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
           <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
-            <div className="p-6 bg-blue-600 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">Cadastro de Colaborador</h3><button onClick={() => setShowEntregadorModal(false)} className="text-2xl">&times;</button></div>
+            <div className="p-6 bg-blue-600 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">{novoEntregador.id ? 'Editar Colaborador' : 'Cadastro de Colaborador'}</h3><button onClick={() => setShowEntregadorModal(false)} className="text-2xl">&times;</button></div>
             <form onSubmit={async (e) => {
                 e.preventDefault();
                 setLoading(true);
@@ -737,6 +926,15 @@ const App: React.FC = () => {
               <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Nome Completo" value={novoEntregador.nome} onChange={e => setNovoEntregador({...novoEntregador, nome: e.target.value})} />
               <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="WhatsApp" value={novoEntregador.telefone} onChange={e => setNovoEntregador({...novoEntregador, telefone: e.target.value})} />
               <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Veículo" value={novoEntregador.veiculo} onChange={e => setNovoEntregador({...novoEntregador, veiculo: e.target.value})} />
+              
+              <div className="space-y-1">
+                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Status</label>
+                 <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-sm text-slate-700" value={novoEntregador.status} onChange={e => setNovoEntregador({...novoEntregador, status: e.target.value as 'Ativo' | 'Inativo'})}>
+                    <option value="Ativo">Ativo</option>
+                    <option value="Inativo">Inativo</option>
+                 </select>
+              </div>
+
               <button className="w-full py-5 bg-blue-600 text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:bg-blue-700 transition-all">Salvar Motorista</button>
             </form>
           </div>
