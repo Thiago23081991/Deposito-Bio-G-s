@@ -140,6 +140,47 @@ function getResumoFinanceiro() {
   return { totalEntradas: ent, totalSaidas: sai, totalAReceber: arec, saldo: ent - sai, recentes: recentes.reverse() };
 }
 
+function gerarRelatorioMensal() {
+  const sheet = getSheet('Financeiro');
+  const data = sheet.getDataRange().getValues();
+  const now = new Date();
+  const currentMonthStr = Utilities.formatDate(now, "GMT-3", "/MM/yyyy");
+  
+  let totalEntradas = 0;
+  let totalSaidas = 0;
+  const catsEnt = {};
+  const catsSai = {};
+  
+  // Start from 1 to skip header
+  for (let i = 1; i < data.length; i++) {
+    const dataHora = String(data[i][1]); // Check if matches /MM/yyyy
+    if (dataHora.includes(currentMonthStr)) {
+      const tipo = data[i][2];
+      const valor = Number(data[i][4]);
+      const categoria = data[i][5] || 'Geral';
+      
+      if (tipo === 'Entrada') {
+        totalEntradas += valor;
+        catsEnt[categoria] = (catsEnt[categoria] || 0) + valor;
+      } else if (tipo === 'Saída') {
+        totalSaidas += valor;
+        catsSai[categoria] = (catsSai[categoria] || 0) + valor;
+      }
+    }
+  }
+  
+  const mapCats = (obj) => Object.keys(obj).map(k => ({ categoria: k, valor: obj[k] }));
+  
+  return {
+    mes: Utilities.formatDate(now, "GMT-3", "MMMM/yyyy"),
+    totalEntradas: totalEntradas,
+    totalSaidas: totalSaidas,
+    saldo: totalEntradas - totalSaidas,
+    categoriasEntrada: mapCats(catsEnt),
+    categoriasSaida: mapCats(catsSai)
+  };
+}
+
 // --- GESTÃO DE PRODUTOS ---
 function salvarProduto(p) {
   const sheet = getSheet('Produtos');

@@ -1,5 +1,5 @@
 
-import { Cliente, Produto, Entregador, Pedido, ResumoFinanceiro, Movimentacao, PedidoItem } from '../types.ts';
+import { Cliente, Produto, Entregador, Pedido, ResumoFinanceiro, Movimentacao, PedidoItem, RelatorioMensal } from '../types.ts';
 
 const callGAS = async (functionName: string, ...args: any[]): Promise<any> => {
   return new Promise((resolve, reject) => {
@@ -161,6 +161,41 @@ export const gasService = {
       });
       return { totalEntradas: ent, totalSaidas: sai, totalAReceber: aRec, saldo: ent - sai, porMetodo: {}, recentes: mockFinanceiro.slice(0, 50) }; 
     } 
+  },
+
+  gerarRelatorioMensal: async (): Promise<RelatorioMensal> => {
+    try { return await callGAS('gerarRelatorioMensal'); }
+    catch {
+      // Mock logic: Filter current month
+      const now = new Date();
+      const currentMonthStr = now.toLocaleDateString().substring(3); // aprox mm/yyyy check based on locale
+      
+      let ent = 0, sai = 0;
+      const catsEnt: Record<string, number> = {};
+      const catsSai: Record<string, number> = {};
+
+      mockFinanceiro.forEach(m => {
+        // Simple check just to simulate. In real app date format needs to be strict
+        if (true) { // Assuming all mock data is recent for demo
+           if (m.tipo === 'Entrada') {
+             ent += m.valor;
+             catsEnt[m.categoria] = (catsEnt[m.categoria] || 0) + m.valor;
+           } else if (m.tipo === 'Saída') {
+             sai += m.valor;
+             catsSai[m.categoria] = (catsSai[m.categoria] || 0) + m.valor;
+           }
+        }
+      });
+
+      return {
+        mes: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+        totalEntradas: ent,
+        totalSaidas: sai,
+        saldo: ent - sai,
+        categoriasEntrada: Object.entries(catsEnt).map(([k, v]) => ({ categoria: k, valor: v })),
+        categoriasSaida: Object.entries(catsSai).map(([k, v]) => ({ categoria: k, valor: v }))
+      };
+    }
   },
   
   listarUltimosPedidos: async () => { try { return await callGAS('listarUltimosPedidos'); } catch { return mockPedidos.slice(0, 30); } },

@@ -67,6 +67,15 @@ export interface ResumoFinanceiro {
   recentes: Movimentacao[];
 }
 
+export interface RelatorioMensal {
+  mes: string;
+  totalEntradas: number;
+  totalSaidas: number;
+  saldo: number;
+  categoriasEntrada: { categoria: string; valor: number }[];
+  categoriasSaida: { categoria: string; valor: number }[];
+}
+
 export enum PaymentMethod {
   DINHEIRO = 'Dinheiro',
   PIX = 'PIX',
