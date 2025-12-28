@@ -123,20 +123,45 @@ function registrarMovimentacao(tipo, valor, descricao, categoria, metodo = '-', 
   return true;
 }
 
-function getResumoFinanceiro() {
+function getResumoFinanceiro(dataIniStr, dataFimStr) {
   const data = getSheet('Financeiro').getDataRange().getValues();
   let ent = 0, sai = 0, arec = 0, recentes = [];
+
+  // Converte string 'yyyy-MM-dd' para timestamp
+  const parseInputDate = (str) => {
+     if (!str) return null;
+     const parts = str.split('-');
+     return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
+  };
+
+  const parseRowDate = (str) => {
+     if (!str) return 0;
+     // Esperado: dd/MM/yyyy HH:mm
+     const parts = str.split(' ')[0].split('/');
+     if(parts.length < 3) return 0;
+     return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
+  };
+
+  const start = dataIniStr ? parseInputDate(dataIniStr) : 0;
+  const end = dataFimStr ? parseInputDate(dataFimStr) : Infinity;
+
   if (data.length > 1) {
     for (let i = 1; i < data.length; i++) {
-      const tipo = data[i][2], valor = Number(data[i][4]);
-      if (tipo === 'Entrada') ent += valor;
-      else if (tipo === 'Saída') sai += valor;
-      else if (tipo === 'A Receber') arec += valor;
-      recentes.push({
-        id: data[i][0], dataHora: data[i][1], tipo: tipo,
-        descricao: data[i][3], valor: valor, categoria: data[i][5], 
-        metodo: data[i][6], detalhe: data[i][7] || ''
-      });
+      const rowDate = parseRowDate(data[i][1]);
+      
+      // Filtra por data (inclusivo)
+      if (rowDate >= start && rowDate <= end) {
+        const tipo = data[i][2], valor = Number(data[i][4]);
+        if (tipo === 'Entrada') ent += valor;
+        else if (tipo === 'Saída') sai += valor;
+        else if (tipo === 'A Receber') arec += valor;
+        
+        recentes.push({
+          id: data[i][0], dataHora: data[i][1], tipo: tipo,
+          descricao: data[i][3], valor: valor, categoria: data[i][5], 
+          metodo: data[i][6], detalhe: data[i][7] || ''
+        });
+      }
     }
   }
   return { totalEntradas: ent, totalSaidas: sai, totalAReceber: arec, saldo: ent - sai, porMetodo: {}, recentes: recentes.reverse() };
@@ -232,6 +257,21 @@ function listarUltimosPedidos() {
     endereco: r[4], produtoSummary: r[5], valorTotal: Number(r[6]), 
     entregador: r[7], status: r[8], formaPagamento: r[9] 
   })).reverse();
+}
+
+function buscarPedidoPorId(id) {
+  const data = getSheet('Pedidos').getDataRange().getValues();
+  for(let i=1; i<data.length; i++) {
+    if(String(data[i][0]) === String(id)) {
+      return { 
+        id: data[i][0], dataHora: data[i][1], nomeCliente: data[i][2], 
+        telefoneCliente: String(data[i][3]), endereco: data[i][4], 
+        produtoSummary: data[i][5], valorTotal: Number(data[i][6]), 
+        entregador: data[i][7], status: data[i][8], formaPagamento: data[i][9] 
+      };
+    }
+  }
+  return null;
 }
 
 function listarClientes() {

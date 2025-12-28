@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { gasService } from './services/gasMock.ts';
-import { Cliente, Produto, Entregador, Pedido, PaymentMethod, ResumoFinanceiro, PedidoItem, Movimentacao, ChatMessage, RelatorioMensal } from './types.ts';
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { Cliente, Produto, Entregador, Pedido, PaymentMethod, ResumoFinanceiro, PedidoItem, Movimentacao, RelatorioMensal } from './types.ts';
 import * as XLSX from 'xlsx';
 
 const App: React.FC = () => {
   // --- ESTADO GLOBAL ---
-  const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores' | 'marketing'>('vendas');
+  const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores'>('vendas');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -17,6 +16,22 @@ const App: React.FC = () => {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [resumo, setResumo] = useState<ResumoFinanceiro | null>(null);
+
+  // --- RASTREAMENTO & QR CODE ---
+  const [trackingPedido, setTrackingPedido] = useState<Pedido | null>(null);
+  const [isTrackingMode, setIsTrackingMode] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrCodePedido, setQrCodePedido] = useState<Pedido | null>(null);
+  const [depositoOrigem, setDepositoOrigem] = useState('Centro'); // Padrão: Centro da cidade ou ajuste conforme necessário
+
+  // --- FILTRO CAIXA ---
+  const [caixaDataIni, setCaixaDataIni] = useState(() => {
+    const date = new Date();
+    return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [caixaDataFim, setCaixaDataFim] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
 
   // --- SELEÇÃO EM MASSA & FILTROS ---
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -56,20 +71,35 @@ const App: React.FC = () => {
   const [selectedEntregador, setSelectedEntregador] = useState<string>('');
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // --- MARKETING IA ---
-  const [mktMessage, setMktMessage] = useState('');
-  const [mktBairroFilter, setMktBairroFilter] = useState('Todos');
-  const [isGeneratingMkt, setIsGeneratingMkt] = useState(false);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ESTOQUE_MINIMO = 10;
   const produtosEstoqueBaixo = useMemo(() => produtos.filter(p => p.estoque < ESTOQUE_MINIMO), [produtos]);
+
+  // --- INITIAL LOAD & TRACKING CHECK ---
+  useEffect(() => {
+    // Check for tracking param
+    const params = new URLSearchParams(window.location.search);
+    const trackingId = params.get('tracking');
+
+    if (trackingId) {
+      setIsTrackingMode(true);
+      setLoading(true);
+      gasService.buscarPedidoPorId(trackingId).then(p => {
+        setTrackingPedido(p);
+        setLoading(false);
+      }).catch(() => {
+        setMessage({type: 'error', text: 'Pedido não encontrado ou link inválido.'});
+        setLoading(false);
+      });
+    } else {
+      loadData();
+    }
+  }, []);
 
   // --- FLUXO DE CAIXA DIÁRIO ---
   const fluxoCaixaDiario = useMemo(() => {
      const grupos: Record<string, { entradas: number; saidas: number }> = {};
      (resumo?.recentes || []).forEach(m => {
-        // Assume formato dd/mm/yyyy hh:mm ou similar, pega apenas a data
         const data = m.dataHora.split(' ')[0];
         if (!grupos[data]) grupos[data] = { entradas: 0, saidas: 0 };
         
@@ -84,7 +114,6 @@ const App: React.FC = () => {
             saldo: vals.entradas - vals.saidas
         }))
         .sort((a, b) => {
-           // Ordena por data decrescente
            const [da, ma, ya] = a.data.split('/').map(Number);
            const [db, mb, yb] = b.data.split('/').map(Number);
            return new Date(yb, mb - 1, db).getTime() - new Date(ya, ma - 1, da).getTime();
@@ -108,7 +137,7 @@ const App: React.FC = () => {
         gasService.listarProdutos(),
         gasService.listarEntregadores(),
         gasService.listarUltimosPedidos(),
-        gasService.getResumoFinanceiro(),
+        gasService.getResumoFinanceiro(caixaDataIni, caixaDataFim),
         gasService.listarClientes()
       ]);
       setProdutos(p || []);
@@ -122,9 +151,18 @@ const App: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [caixaDataIni, caixaDataFim]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // --- QR CODE GENERATION ---
+  const handleGenerateQR = (pedido: Pedido) => {
+    setQrCodePedido(pedido);
+    setShowQRModal(true);
+  };
+
+  const getMapsLink = (enderecoCliente: string) => {
+    // Gera link do Google Maps: Depósito (Origem) -> Cliente (Destino)
+    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(depositoOrigem)}&destination=${encodeURIComponent(enderecoCliente)}&travelmode=driving`;
+  };
 
   // --- GERAÇÃO RELATÓRIO ---
   const handleGerarRelatorio = async () => {
@@ -340,20 +378,112 @@ const App: React.FC = () => {
     } finally { setLoading(false); }
   };
 
-  // --- MARKETING IA ---
-  const generateMktCopy = async (tipo: string) => {
-    setIsGeneratingMkt(true);
-    try {
-      const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
-      const prompt = `Gere uma mensagem curta e persuasiva de WhatsApp para um depósito de gás. Assunto: ${tipo}. Use [nome] para o cliente e emojis.`;
-      const res = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
-      setMktMessage(res.text || '');
-    } catch {
-      setMessage({ type: 'error', text: 'Erro na IA.' });
-    } finally { setIsGeneratingMkt(false); }
-  };
-
   // --- RENDERS ---
+
+  // RENDER: TRACKING VIEW (CLIENT)
+  if (isTrackingMode) {
+    if (!trackingPedido) return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
+        {loading ? (
+            <div className="flex flex-col items-center gap-4">
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+              <p className="text-slate-500 font-bold text-sm uppercase">Buscando pedido...</p>
+            </div>
+        ) : (
+            <div className="text-center">
+              <i className="fas fa-search text-4xl text-slate-300 mb-4"></i>
+              <p className="text-slate-500 font-bold">Pedido não encontrado.</p>
+              <button onClick={() => window.location.href = window.location.href.split('?')[0]} className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm uppercase">Ir para Home</button>
+            </div>
+        )}
+      </div>
+    );
+
+    const steps = [
+      { status: 'Pendente', icon: 'fa-clipboard-check', label: 'Confirmado' },
+      { status: 'Em Rota', icon: 'fa-truck-fast', label: 'Saiu para Entrega' },
+      { status: 'Entregue', icon: 'fa-check', label: 'Entregue' }
+    ];
+
+    const currentStepIdx = steps.findIndex(s => s.status === trackingPedido.status);
+    const isCancelled = trackingPedido.status === 'Cancelado';
+
+    return (
+      <div className="min-h-screen bg-slate-100 font-sans">
+        <div className="bg-white p-6 shadow-sm sticky top-0 z-10">
+          <div className="flex justify-center mb-4">
+             <img src="https://cdn-icons-png.flaticon.com/512/3313/3313460.png" alt="Logo" className="h-12 w-12" />
+          </div>
+          <h1 className="text-center text-xl font-black text-slate-800 uppercase tracking-tight">Rastreamento</h1>
+          <p className="text-center text-[10px] text-slate-400 font-bold uppercase mt-1">Pedido #{trackingPedido.id}</p>
+        </div>
+        
+        <div className="max-w-md mx-auto p-6 space-y-6">
+           {isCancelled ? (
+             <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl text-center">
+                <i className="fas fa-ban text-4xl text-rose-500 mb-3"></i>
+                <h2 className="text-lg font-black text-rose-600 uppercase">Pedido Cancelado</h2>
+                <p className="text-xs text-rose-400 mt-2">Entre em contato para mais informações.</p>
+             </div>
+           ) : (
+             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                <div className="space-y-8 relative">
+                   {/* Linha conectora */}
+                   <div className="absolute left-6 top-2 bottom-2 w-1 bg-slate-100 -z-0"></div>
+                   
+                   {steps.map((step, idx) => {
+                      const isActive = idx <= currentStepIdx || (trackingPedido.status === 'Entregue' && step.status !== 'Cancelado');
+                      const isCurrent = idx === currentStepIdx;
+                      
+                      return (
+                        <div key={step.status} className={`relative flex items-center gap-4 z-10 ${isActive ? 'opacity-100' : 'opacity-40 grayscale'}`}>
+                           <div className={`w-12 h-12 rounded-full flex items-center justify-center border-4 ${isActive ? (isCurrent ? 'bg-blue-600 border-blue-100 text-white shadow-lg scale-110' : 'bg-emerald-500 border-emerald-100 text-white') : 'bg-white border-slate-100 text-slate-300'} transition-all`}>
+                              <i className={`fas ${step.icon} text-sm`}></i>
+                           </div>
+                           <div>
+                              <p className={`text-xs font-black uppercase tracking-widest ${isActive ? 'text-slate-800' : 'text-slate-400'}`}>{step.label}</p>
+                              {isCurrent && <p className="text-[10px] font-bold text-blue-600 animate-pulse">Status Atual</p>}
+                           </div>
+                        </div>
+                      );
+                   })}
+                </div>
+             </div>
+           )}
+
+           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+              <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest border-b pb-2">Detalhes da Entrega</h3>
+              <div className="flex items-start gap-3">
+                 <i className="fas fa-map-marker-alt text-blue-600 mt-1"></i>
+                 <div>
+                    <p className="text-xs font-black text-slate-800 uppercase">Endereço</p>
+                    <p className="text-xs text-slate-500">{trackingPedido.endereco}</p>
+                 </div>
+              </div>
+              <div className="flex items-start gap-3">
+                 <i className="fas fa-motorcycle text-blue-600 mt-1"></i>
+                 <div>
+                    <p className="text-xs font-black text-slate-800 uppercase">Entregador</p>
+                    <p className="text-xs text-slate-500">{trackingPedido.entregador || 'A definir'}</p>
+                 </div>
+              </div>
+              <div className="flex items-start gap-3">
+                 <i className="fas fa-receipt text-blue-600 mt-1"></i>
+                 <div>
+                    <p className="text-xs font-black text-slate-800 uppercase">Total</p>
+                    <p className="text-lg font-black text-emerald-600">R$ {trackingPedido.valorTotal.toFixed(2)}</p>
+                 </div>
+              </div>
+           </div>
+           
+           <button onClick={() => window.open(`https://wa.me/55${trackingPedido.telefoneCliente.replace(/\D/g,'')}`, '_blank')} className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-emerald-600 transition flex items-center justify-center gap-2">
+              <i className="fab fa-whatsapp text-lg"></i> Falar com Suporte
+           </button>
+        </div>
+      </div>
+    );
+  }
+
   const renderVendas = () => {
     const cartTotal = cart.reduce((acc, i) => acc + (i.qtd * i.precoUnitario), 0);
     const filteredPedidos = pedidos.filter(p => filterStatus === 'Todos' || p.status === filterStatus);
@@ -445,6 +575,7 @@ const App: React.FC = () => {
                     <div><p className="font-black text-slate-800 text-sm leading-none">{p.nomeCliente}</p><p className="text-[10px] font-bold text-slate-500 mt-1">📍 {p.endereco}</p></div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button onClick={(e) => { e.stopPropagation(); handleGenerateQR(p); }} className="w-8 h-8 bg-slate-100 text-slate-600 hover:bg-slate-900 hover:text-white transition rounded-lg" title="Ver QR Code"><i className="fas fa-qrcode text-[10px]"></i></button>
                     {p.status === 'Pendente' && <button onClick={(e) => { e.stopPropagation(); processStatusUpdate([p.id], 'Em Rota'); }} className="w-8 h-8 bg-blue-50 text-blue-600 rounded-lg"><i className="fas fa-truck-fast text-[10px]"></i></button>}
                     {p.status !== 'Entregue' && <button onClick={(e) => { e.stopPropagation(); processStatusUpdate([p.id], 'Entregue'); }} className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg"><i className="fas fa-check text-[10px]"></i></button>}
                   </div>
@@ -504,9 +635,15 @@ const App: React.FC = () => {
                  <button onClick={async () => {
                     setLoading(true);
                     try {
-                      await gasService.salvarPedido({ nomeCliente: nomeBusca, telefoneCliente: telBusca, endereco: endBusca, itens: cart, valorTotal: cartTotal, entregador: selectedEntregador || 'Logística', formaPagamento: formaPgto });
+                      const res = await gasService.salvarPedido({ nomeCliente: nomeBusca, telefoneCliente: telBusca, endereco: endBusca, itens: cart, valorTotal: cartTotal, entregador: selectedEntregador || 'Logística', formaPagamento: formaPgto });
                       setCart([]); setNomeBusca(''); setTelBusca(''); setEndBusca(''); setSelectedEntregador(''); await loadData(true);
                       setMessage({ type: 'success', text: 'Venda registrada com sucesso!' });
+                      
+                      // Auto-open QR Code modal after sale
+                      if (res.id) {
+                         const newOrder = { id: res.id, nomeCliente: nomeBusca, telefoneCliente: telBusca, endereco: endBusca, valorTotal: cartTotal, status: 'Pendente', itens: cart } as Pedido;
+                         handleGenerateQR(newOrder);
+                      }
                     } finally { setLoading(false); }
                   }} disabled={!nomeBusca || cart.length === 0} className="col-span-3 py-5 bg-blue-600 text-white font-black rounded-2xl uppercase text-[11px] shadow-xl hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">Finalizar Pedido</button>
               </div>
@@ -575,53 +712,6 @@ const App: React.FC = () => {
     );
   };
 
-  const renderMarketing = () => {
-    const bairros = ['Todos', ...Array.from(new Set(clientes.map(c => c.bairro).filter(b => b)))];
-    const filteredMktClients = clientes.filter(c => mktBairroFilter === 'Todos' || c.bairro === mktBairroFilter);
-    return (
-      <div className="space-y-8 animate-in fade-in">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-           <div className="lg:col-span-1 space-y-6">
-              <div className="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100">
-                 <h3 className="text-lg font-black mb-6 flex items-center gap-3 text-slate-800"><i className="fas fa-wand-magic-sparkles text-blue-600"></i> Bio IA Marketing</h3>
-                 <div className="grid grid-cols-2 gap-3 mb-6">
-                    {['Promoção Gás', 'Feriado', 'Aviso Falta', 'Fidelidade'].map(t => (
-                       <button key={t} onClick={() => generateMktCopy(t)} disabled={isGeneratingMkt} className="px-4 py-3 bg-slate-50 border rounded-2xl text-[10px] font-black uppercase text-slate-600 hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50">{isGeneratingMkt ? 'Gerando...' : t}</button>
-                    ))}
-                 </div>
-                 <textarea className="w-full p-5 bg-slate-50 border-none rounded-[30px] font-medium text-sm min-h-[250px] mb-4 leading-relaxed" placeholder="Gere ou digite a mensagem..." value={mktMessage} onChange={e => setMktMessage(e.target.value)} />
-                 <div className="p-4 bg-blue-50 rounded-2xl text-[10px] font-bold text-blue-600 flex gap-3"><i className="fas fa-info-circle"></i><p>Dica: Use [nome] para o sistema trocar pelo nome do cliente.</p></div>
-              </div>
-           </div>
-           <div className="lg:col-span-2 space-y-6">
-              <div className="bg-white p-8 rounded-[40px] shadow-xl border border-slate-100">
-                 <div className="flex justify-between items-center mb-8">
-                    <div><h3 className="text-xl font-black text-slate-900 tracking-tight">Segmentação de Clientes</h3><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Total: {filteredMktClients.length} contatos</p></div>
-                    <select className="bg-slate-50 p-4 rounded-2xl font-black text-[10px] uppercase border-none outline-none" value={mktBairroFilter} onChange={e => setMktBairroFilter(e.target.value)}>
-                       {bairros.map(b => <option key={b} value={b}>{b}</option>)}
-                    </select>
-                 </div>
-                 <div className="max-h-[500px] overflow-y-auto custom-scrollbar divide-y divide-slate-50">
-                    {filteredMktClients.map(c => (
-                       <div key={c.id} className="py-4 flex justify-between items-center hover:bg-slate-50/50 px-4 rounded-2xl transition-all group">
-                          <div className="flex items-center gap-4">
-                             <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-xs uppercase tracking-tighter">{c.nome.charAt(0)}</div>
-                             <div><p className="font-black text-sm text-slate-800 uppercase">{c.nome}</p><p className="text-[10px] text-slate-400 font-bold italic">📍 {c.bairro || 'Não informado'}</p></div>
-                          </div>
-                          <button onClick={() => {
-                            const msg = mktMessage.replace(/\[nome\]/gi, c.nome);
-                            window.open(`https://wa.me/55${c.telefone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                          }} disabled={!mktMessage.trim()} className="px-6 py-3 bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase rounded-2xl hover:bg-emerald-600 hover:text-white transition-all disabled:opacity-20 flex items-center gap-2"><i className="fab fa-whatsapp text-lg"></i> Disparar</button>
-                       </div>
-                    ))}
-                 </div>
-              </div>
-           </div>
-        </div>
-      </div>
-    );
-  };
-
   const renderEntregadores = () => (
     <div className="space-y-8 animate-in fade-in">
       <div className="flex justify-between items-center bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl">
@@ -660,439 +750,19 @@ const App: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-         {produtos.map(p => (
-            <div key={p.id} className="bg-white p-6 rounded-[30px] border border-slate-100 shadow-lg hover:shadow-xl transition-all relative overflow-hidden group">
-               {p.estoque < ESTOQUE_MINIMO && <div className="absolute top-0 right-0 bg-rose-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-bl-xl z-10">Estoque Baixo</div>}
+         {produtos.map(p => {
+            const isLowStock = p.estoque < ESTOQUE_MINIMO;
+            return (
+            <div key={p.id} className={`p-6 rounded-[30px] border shadow-lg hover:shadow-xl transition-all relative overflow-hidden group ${isLowStock ? 'bg-rose-50 border-rose-500 shadow-rose-200' : 'bg-white border-slate-100'}`}>
+               {isLowStock && (
+                   <div className="absolute top-0 right-0 bg-rose-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-bl-xl z-10 flex items-center gap-1 animate-pulse">
+                       <i className="fas fa-exclamation-triangle"></i> Estoque Crítico
+                   </div>
+               )}
                <div className="flex items-start justify-between mb-4">
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-xl font-black"><i className="fas fa-box-open"></i></div>
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black ${isLowStock ? 'bg-rose-100 text-rose-600' : 'bg-blue-50 text-blue-600'}`}><i className="fas fa-box-open"></i></div>
                   <button onClick={() => { setNovoProduto(p); setShowProdutoModal(true); }} className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 hover:bg-blue-600 hover:text-white transition flex items-center justify-center"><i className="fas fa-pen text-xs"></i></button>
                </div>
                <h4 className="font-black text-slate-800 text-base uppercase mb-1 truncate">{p.nome}</h4>
                <p className="text-[10px] text-slate-400 font-bold mb-4 uppercase">{p.id}</p>
-               <div className="space-y-2 bg-slate-50 p-4 rounded-2xl">
-                  <div className="flex justify-between items-center text-xs font-bold">
-                     <span className="text-slate-400 uppercase">Preço Venda</span>
-                     <span className="text-emerald-600">R$ {p.preco.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs font-bold">
-                     <span className="text-slate-400 uppercase">Estoque</span>
-                     <span className={`${p.estoque < ESTOQUE_MINIMO ? 'text-rose-500' : 'text-slate-800'}`}>{p.estoque} {p.unidadeMedida || 'unidade'}</span>
-                  </div>
-               </div>
-            </div>
-         ))}
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] pb-16 font-sans">
-      <header className="bg-white border-b sticky top-0 z-40 shadow-sm backdrop-blur-lg bg-white/80">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <div className="relative group cursor-pointer">
-              <div className="absolute -inset-2 bg-gradient-to-r from-yellow-400 to-blue-600 rounded-full blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
-              <img 
-                 src="https://cdn-icons-png.flaticon.com/512/3313/3313460.png" 
-                 alt="Bio Gás Logo" 
-                 className="h-14 w-14 object-contain relative z-10 transition-transform group-hover:scale-110" 
-              />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tighter leading-none italic flex items-center">
-                <span className="text-[#FFC107] drop-shadow-sm mr-1">BIO</span>
-                <span className="text-[#0056b3] drop-shadow-sm">GÁS</span>
-                <span className="ml-2 bg-blue-600 text-white text-[9px] px-2 py-0.5 rounded-full not-italic font-bold tracking-wider shadow-sm shadow-blue-200">PRO</span>
-              </h1>
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em] mt-1 pl-0.5">Gestão Inteligente</p>
-            </div>
-          </div>
-          <div className="flex gap-10">
-            <div className="text-right"><p className="text-[9px] text-slate-400 font-black uppercase mb-1">Caixa Geral</p><p className="font-black text-lg text-slate-900 tracking-tighter">R$ {(resumo?.totalEntradas || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
-            <div className="text-right"><p className="text-[9px] text-rose-400 font-black uppercase mb-1">Fiado / Pendente</p><p className="font-black text-lg text-rose-600 tracking-tighter">R$ {(resumo?.totalAReceber || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
-          </div>
-        </div>
-        <nav className="max-w-7xl mx-auto px-6 flex overflow-x-auto gap-1 border-t no-scrollbar">
-          {[
-            { id: 'vendas', label: 'Atendimento', icon: '⚡' },
-            { id: 'cobranca', label: 'Cobrança', icon: '💸' },
-            { id: 'caixa', label: 'Caixa', icon: '💰' },
-            { id: 'marketing', label: 'Marketing IA', icon: '📢' },
-            { id: 'entregadores', label: 'Equipe', icon: '🛵' },
-            { id: 'estoque', label: 'Estoque', icon: '📦' },
-            { id: 'clientes', label: 'CRM Inteligente', icon: '👥' },
-          ].map(tab => {
-            const hasAlert = tab.id === 'estoque' && produtosEstoqueBaixo.length > 0;
-            return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-2 px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all relative ${activeTab === tab.id ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
-                <span className="text-xl">{tab.icon}</span> {tab.label}
-                {hasAlert && <span className="absolute top-3 right-3 w-5 h-5 bg-rose-500 text-white text-[8px] font-black rounded-full flex items-center justify-center animate-pulse border-2 border-white shadow-sm">{produtosEstoqueBaixo.length}</span>}
-              </button>
-            );
-          })}
-        </nav>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        {message && (
-          <div className={`mb-10 p-5 rounded-3xl flex justify-between items-center border-2 animate-in slide-in-from-top-6 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-100' : 'bg-rose-50 text-rose-800 border-rose-100'} shadow-sm`}>
-            <span className="font-black text-xs uppercase tracking-widest">{message.text}</span>
-            <button onClick={() => setMessage(null)} className="text-2xl font-light hover:rotate-90 transition-transform">×</button>
-          </div>
-        )}
-        
-        {activeTab === 'vendas' && renderVendas()}
-        {activeTab === 'cobranca' && renderCobranca()}
-        {activeTab === 'marketing' && renderMarketing()}
-        {activeTab === 'entregadores' && renderEntregadores()}
-        {activeTab === 'estoque' && renderEstoque()}
-        
-        {activeTab === 'clientes' && (
-          <div className="bg-white rounded-[40px] shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in">
-            <div className="p-10 border-b flex justify-between items-center bg-slate-50/50">
-              <h3 className="font-black text-slate-800 uppercase text-xs tracking-[0.3em]">CRM Master de Clientes</h3>
-              <div className="flex gap-3 items-center">
-                <input type="file" className="hidden" ref={fileInputRef} accept=".xlsx, .xls, .csv" onChange={handleImportExcel} />
-                <button onClick={() => fileInputRef.current?.click()} className="px-6 py-4 bg-white border-2 border-slate-100 rounded-[20px] font-black text-[10px] uppercase text-slate-500 hover:bg-slate-50 transition flex items-center gap-2 shadow-sm"><i className="fas fa-file-import text-blue-600"></i> Importar Planilha</button>
-                <div className="relative"><i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i><input className="pl-12 pr-6 py-4 bg-white border border-slate-200 rounded-[20px] font-bold text-sm shadow-sm w-80 outline-none" placeholder="Filtrar por nome..." value={searchTermCRM} onChange={e => setSearchTermCRM(e.target.value)} /></div>
-              </div>
-            </div>
-            <table className="w-full text-left">
-              <thead className="bg-slate-50/80 border-b">
-                <tr>{['Consumidor', 'WhatsApp', 'Endereço', 'Bairro'].map(h => <th key={h} className="px-10 py-6 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {clientes.filter(c => c.nome.toLowerCase().includes(searchTermCRM.toLowerCase())).map(c => (
-                  <tr key={c.id} className="hover:bg-slate-50/30 transition-colors">
-                    <td className="px-10 py-6 text-sm font-black text-slate-800 uppercase tracking-tight">{c.nome}</td>
-                    <td className="px-10 py-6 text-xs font-bold text-blue-600">{c.telefone}</td>
-                    <td className="px-10 py-6 text-xs font-medium text-slate-500 font-bold italic">📍 {c.endereco}</td>
-                    <td className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-tighter">{c.bairro}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {activeTab === 'caixa' && (
-          <div className="space-y-8 animate-in slide-in-from-bottom-8">
-             <div className="flex justify-end gap-3 mb-2">
-               <button onClick={handleGerarRelatorio} className="bg-indigo-500 hover:bg-indigo-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg transition flex items-center gap-2"><i className="fas fa-chart-pie"></i> Relatório Mensal</button>
-               <button onClick={() => { setMovimentacaoForm({tipo: 'Entrada', descricao: '', valor: '', categoria: 'Venda Extra'}); setShowFinanceiroModal(true); }} className="bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg transition flex items-center gap-2"><i className="fas fa-plus"></i> Nova Receita</button>
-               <button onClick={() => { setMovimentacaoForm({tipo: 'Saída', descricao: '', valor: '', categoria: 'Despesa'}); setShowFinanceiroModal(true); }} className="bg-rose-500 hover:bg-rose-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg transition flex items-center gap-2"><i className="fas fa-minus"></i> Nova Despesa</button>
-             </div>
-             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {[{l: 'Receitas', v: resumo?.totalEntradas || 0, c: 'text-emerald-600', i: 'fa-arrow-up-long'}, {l: 'Despesas', v: resumo?.totalSaidas || 0, c: 'text-rose-600', i: 'fa-arrow-down-long'}, {l: 'Pendentes', v: resumo?.totalAReceber || 0, c: 'text-orange-500', i: 'fa-clock'}, {l: 'Saldo Real', v: resumo?.saldo || 0, c: 'text-slate-900', b: 'bg-blue-50 border-blue-100', i: 'fa-vault'}].map((s,i) => (
-                  <div key={i} className={`p-8 bg-white rounded-[40px] border ${s.b || 'border-slate-100'} shadow-sm flex items-center gap-5`}>
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl ${s.c.replace('text', 'bg').replace('-600', '-50')} ${s.c}`}><i className={`fas ${s.i}`}></i></div>
-                    <div><p className="text-[9px] font-black text-slate-400 uppercase mb-1">{s.l}</p><p className={`text-2xl font-black ${s.c}`}>R$ {s.v.toFixed(2)}</p></div>
-                  </div>
-                ))}
-             </div>
-
-             {/* FLUXO DIÁRIO */}
-             <div className="bg-white rounded-[40px] shadow-xl border border-slate-100 overflow-hidden">
-                <div className="p-8 border-b flex justify-between items-center bg-slate-50/30">
-                   <h3 className="font-black text-slate-800 uppercase text-[10px]">Fluxo de Caixa Diário</h3>
-                </div>
-                <table className="w-full text-left">
-                   <thead className="bg-slate-50 border-b">
-                      <tr>{['Data', 'Entradas', 'Saídas', 'Saldo do Dia'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase">{h}</th>)}</tr>
-                   </thead>
-                   <tbody className="divide-y divide-slate-100">
-                      {fluxoCaixaDiario.map((row, i) => (
-                         <tr key={i} className="hover:bg-slate-50/30 transition-colors">
-                            <td className="px-8 py-6 text-[10px] font-black text-slate-400">{row.data}</td>
-                            <td className="px-8 py-6 font-black text-emerald-600">R$ {row.entradas.toFixed(2)}</td>
-                            <td className="px-8 py-6 font-black text-rose-600">R$ {row.saidas.toFixed(2)}</td>
-                            <td className={`px-8 py-6 font-black ${row.saldo >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>R$ {row.saldo.toFixed(2)}</td>
-                         </tr>
-                      ))}
-                      {(!fluxoCaixaDiario || fluxoCaixaDiario.length === 0) && <tr><td colSpan={4} className="p-10 text-center font-black text-slate-300 text-xs uppercase">Sem movimentações</td></tr>}
-                   </tbody>
-                </table>
-             </div>
-
-             <div className="bg-white rounded-[40px] shadow-xl border border-slate-100 overflow-hidden relative">
-                {selectedMovimentacaoIds.length > 0 && (
-                  <div className="absolute top-0 left-0 w-full bg-slate-900 p-4 z-20 flex justify-between items-center animate-in slide-in-from-top-4">
-                    <div className="flex items-center gap-4">
-                      <span className="text-white font-black text-[10px] uppercase tracking-widest">{selectedMovimentacaoIds.length} Selecionados</span>
-                      <span className="text-emerald-400 font-black text-[12px]">Soma: R$ {totalSelecionadoFinanceiro.toFixed(2)}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={handleExportMovimentacoes} className="px-4 py-2 bg-emerald-500 text-white text-[10px] font-black rounded-lg uppercase flex items-center gap-2"><i className="fas fa-file-excel"></i> Exportar Seleção</button>
-                      <button onClick={() => setSelectedMovimentacaoIds([])} className="ml-2 text-white/50 text-xl">×</button>
-                    </div>
-                  </div>
-                )}
-                <div className="p-8 border-b flex justify-between items-center bg-slate-50/30">
-                  <h3 className="font-black text-slate-800 uppercase text-[10px]">Movimentações Detalhadas</h3>
-                </div>
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b">
-                    <tr>
-                      <th className="px-8 py-6 w-10">
-                        <input 
-                          type="checkbox" 
-                          className="w-4 h-4 rounded text-blue-600 cursor-pointer"
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              const allIds = resumo?.recentes.map(m => m.id) || [];
-                              setSelectedMovimentacaoIds(allIds);
-                            } else {
-                              setSelectedMovimentacaoIds([]);
-                            }
-                          }}
-                          checked={resumo?.recentes && resumo.recentes.length > 0 && selectedMovimentacaoIds.length === resumo.recentes.length}
-                        />
-                      </th>
-                      {['Data', 'Tipo', 'Descrição', 'Valor', 'Observações'].map(h => <th key={h} className="px-8 py-6 text-[9px] font-black text-slate-400 uppercase">{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(resumo?.recentes || []).map(m => (
-                      <tr key={m.id} className={`hover:bg-slate-50/30 transition-colors cursor-pointer ${selectedMovimentacaoIds.includes(m.id) ? 'bg-blue-50/50' : ''}`} onClick={() => setSelectedMovimentacaoIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}>
-                        <td className="px-8 py-6" onClick={e => e.stopPropagation()}>
-                           <input type="checkbox" checked={selectedMovimentacaoIds.includes(m.id)} onChange={() => setSelectedMovimentacaoIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])} className="w-4 h-4 rounded text-blue-600 cursor-pointer" />
-                        </td>
-                        <td className="px-8 py-6 text-[10px] font-black text-slate-400">{m.dataHora}</td>
-                        <td className="px-8 py-6"><span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-tighter ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-700' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-700' : m.tipo === 'Liquidado' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{m.tipo}</span></td>
-                        <td className="px-8 py-6 text-sm font-black text-slate-800 uppercase">{m.descricao}</td>
-                        <td className={`px-8 py-6 font-black text-base ${m.tipo === 'Saída' ? 'text-rose-600' : 'text-slate-900'}`}>R$ {m.valor.toFixed(2)}</td>
-                        <td className="px-8 py-6 text-[10px] font-medium text-slate-400 italic">{m.detalhe || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-             </div>
-          </div>
-        )}
-      </main>
-
-      {/* MODAL BAIXA DÍVIDA */}
-      {showBaixaModal && selectedDivida && (
-         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
-           <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
-             <div className="p-6 bg-emerald-500 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">Receber Conta</h3><button onClick={() => setShowBaixaModal(false)} className="text-2xl">&times;</button></div>
-             <div className="p-8 space-y-6">
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase">Cliente</p>
-                  <p className="text-sm font-black text-slate-800">{selectedDivida.descricao}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase">Valor a Receber</p>
-                  <p className="text-3xl font-black text-emerald-600">R$ {selectedDivida.valor.toFixed(2)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Forma de Pagamento</p>
-                  <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-600" value={metodoBaixa} onChange={e => setMetodoBaixa(e.target.value)}>
-                     <option value="Dinheiro">Dinheiro</option>
-                     <option value="PIX">PIX</option>
-                     <option value="Cartão de Débito">Cartão de Débito</option>
-                     <option value="Cartão de Crédito">Cartão de Crédito</option>
-                  </select>
-                </div>
-                <button onClick={async () => {
-                   setLoading(true);
-                   try {
-                     await gasService.liquidarDivida(selectedDivida.id, metodoBaixa);
-                     setShowBaixaModal(false);
-                     await loadData(true);
-                     setMessage({ type: 'success', text: 'Recebimento confirmado e lançado no caixa!' });
-                   } finally { setLoading(false); }
-                }} className="w-full py-5 bg-emerald-500 text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:bg-emerald-600 transition-all">Confirmar Recebimento</button>
-             </div>
-           </div>
-         </div>
-      )}
-
-      {/* MODAL ENTREGADOR */}
-      {showEntregadorModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
-          <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
-            <div className="p-6 bg-blue-600 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">{novoEntregador.id ? 'Editar Colaborador' : 'Cadastro de Colaborador'}</h3><button onClick={() => setShowEntregadorModal(false)} className="text-2xl">&times;</button></div>
-            <form onSubmit={async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                try {
-                  await gasService.salvarEntregador(novoEntregador);
-                  setShowEntregadorModal(false);
-                  setMessage({ type: 'success', text: 'Entregador registrado!' });
-                  await loadData(true);
-                } finally { setLoading(false); }
-              }} className="p-8 space-y-5">
-              <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Nome Completo" value={novoEntregador.nome} onChange={e => setNovoEntregador({...novoEntregador, nome: e.target.value})} />
-              <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="WhatsApp" value={novoEntregador.telefone} onChange={e => setNovoEntregador({...novoEntregador, telefone: e.target.value})} />
-              <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Veículo" value={novoEntregador.veiculo} onChange={e => setNovoEntregador({...novoEntregador, veiculo: e.target.value})} />
-              
-              <div className="space-y-1">
-                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Status</label>
-                 <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-sm text-slate-700" value={novoEntregador.status} onChange={e => setNovoEntregador({...novoEntregador, status: e.target.value as 'Ativo' | 'Inativo'})}>
-                    <option value="Ativo">Ativo</option>
-                    <option value="Inativo">Inativo</option>
-                 </select>
-              </div>
-
-              <button className="w-full py-5 bg-blue-600 text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:bg-blue-700 transition-all">Salvar Motorista</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL PRODUTO */}
-      {showProdutoModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
-          <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
-            <div className="p-6 bg-blue-600 text-white flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest">{novoProduto.id ? 'Editar Produto' : 'Novo Produto'}</h3><button onClick={() => setShowProdutoModal(false)} className="text-2xl">&times;</button></div>
-            <form onSubmit={async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                try {
-                  await gasService.salvarProduto(novoProduto);
-                  setShowProdutoModal(false);
-                  setMessage({ type: 'success', text: 'Produto salvo com sucesso!' });
-                  await loadData(true);
-                } finally { setLoading(false); }
-              }} className="p-8 space-y-5">
-              <div className="space-y-1">
-                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Nome do Produto</label>
-                 <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Ex: Gás P13" value={novoProduto.nome} onChange={e => setNovoProduto({...novoProduto, nome: e.target.value})} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Preço Venda (R$)</label>
-                    <input required type="number" step="0.01" className="w-full p-4 bg-slate-50 rounded-2xl font-bold" value={novoProduto.preco} onChange={e => setNovoProduto({...novoProduto, preco: Number(e.target.value)})} />
-                 </div>
-                 <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Preço Custo (R$)</label>
-                    <input required type="number" step="0.01" className="w-full p-4 bg-slate-50 rounded-2xl font-bold" value={novoProduto.precoCusto} onChange={e => setNovoProduto({...novoProduto, precoCusto: Number(e.target.value)})} />
-                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Estoque Atual</label>
-                    <input required type="number" className="w-full p-4 bg-slate-50 rounded-2xl font-bold" value={novoProduto.estoque} onChange={e => setNovoProduto({...novoProduto, estoque: Number(e.target.value)})} />
-                 </div>
-                 <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Unidade</label>
-                    <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-sm" value={novoProduto.unidadeMedida} onChange={e => setNovoProduto({...novoProduto, unidadeMedida: e.target.value})}>
-                       <option value="unidade">Unidade</option>
-                       <option value="kg">Kg</option>
-                       <option value="litro">Litro</option>
-                       <option value="metro">Metro</option>
-                       <option value="pacote">Pacote</option>
-                       <option value="caixa">Caixa</option>
-                    </select>
-                 </div>
-              </div>
-              <button className="w-full py-5 bg-blue-600 text-white font-black rounded-3xl uppercase text-[11px] shadow-xl hover:bg-blue-700 transition-all">Salvar Produto</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL FINANCEIRO */}
-      {showFinanceiroModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
-          <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden">
-            <div className={`p-6 ${movimentacaoForm.tipo === 'Entrada' ? 'bg-emerald-500' : 'bg-rose-500'} text-white flex justify-between items-center`}>
-              <h3 className="font-black text-xs uppercase tracking-widest">{movimentacaoForm.tipo === 'Entrada' ? 'Nova Receita' : 'Nova Despesa'}</h3>
-              <button onClick={() => setShowFinanceiroModal(false)} className="text-2xl">&times;</button>
-            </div>
-            <form onSubmit={async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                try {
-                  await gasService.registrarMovimentacao(movimentacaoForm.tipo, Number(movimentacaoForm.valor), movimentacaoForm.descricao, movimentacaoForm.categoria, 'MANUAL', 'Lançamento via Dashboard');
-                  setShowFinanceiroModal(false);
-                  setMessage({ type: 'success', text: 'Movimentação registrada com sucesso!' });
-                  await loadData(true);
-                } finally { setLoading(false); }
-              }} className="p-8 space-y-5">
-              <input required className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Descrição (ex: Conta de Luz)" value={movimentacaoForm.descricao} onChange={e => setMovimentacaoForm({...movimentacaoForm, descricao: e.target.value})} />
-              <input required type="number" step="0.01" className="w-full p-4 bg-slate-50 rounded-2xl font-bold" placeholder="Valor (R$)" value={movimentacaoForm.valor} onChange={e => setMovimentacaoForm({...movimentacaoForm, valor: e.target.value})} />
-              <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-500" value={movimentacaoForm.categoria} onChange={e => setMovimentacaoForm({...movimentacaoForm, categoria: e.target.value})}>
-                 <option value="Geral">Geral</option>
-                 <option value="Fornecedores">Fornecedores</option>
-                 <option value="Aluguel/Contas">Aluguel/Contas</option>
-                 <option value="Funcionários">Funcionários</option>
-                 <option value="Venda Extra">Venda Extra</option>
-                 <option value="Outros">Outros</option>
-              </select>
-              <button className={`w-full py-5 ${movimentacaoForm.tipo === 'Entrada' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600'} text-white font-black rounded-3xl uppercase text-[11px] shadow-xl transition-all`}>Salvar Lançamento</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL RELATÓRIO MENSAL */}
-      {showRelatorioModal && relatorio && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-in zoom-in-95">
-          <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <div className="p-6 bg-indigo-600 text-white flex justify-between items-center">
-               <div>
-                  <h3 className="font-black text-xs uppercase tracking-widest">Relatório Financeiro</h3>
-                  <p className="text-indigo-200 text-sm font-bold capitalize">{relatorio.mes}</p>
-               </div>
-               <button onClick={() => setShowRelatorioModal(false)} className="text-2xl">&times;</button>
-            </div>
-            <div className="p-8 space-y-8">
-               <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-                     <p className="text-[9px] font-black text-emerald-400 uppercase">Receita Total</p>
-                     <p className="text-xl font-black text-emerald-600">R$ {relatorio.totalEntradas.toFixed(2)}</p>
-                  </div>
-                  <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100">
-                     <p className="text-[9px] font-black text-rose-400 uppercase">Despesa Total</p>
-                     <p className="text-xl font-black text-rose-600">R$ {relatorio.totalSaidas.toFixed(2)}</p>
-                  </div>
-               </div>
-               <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 text-center">
-                  <p className="text-[9px] font-black text-slate-400 uppercase">Saldo Líquido do Mês</p>
-                  <p className={`text-3xl font-black ${relatorio.saldo >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>R$ {relatorio.saldo.toFixed(2)}</p>
-               </div>
-               
-               {relatorio.categoriasEntrada.length > 0 && (
-                  <div>
-                     <h4 className="font-black text-xs uppercase text-slate-800 mb-3 border-b pb-2">Receitas por Categoria</h4>
-                     <div className="space-y-3">
-                        {relatorio.categoriasEntrada.map((c, i) => (
-                           <div key={i}>
-                              <div className="flex justify-between text-[10px] font-bold uppercase mb-1"><span>{c.categoria}</span><span>R$ {c.valor.toFixed(2)}</span></div>
-                              <div className="w-full bg-slate-100 rounded-full h-1.5"><div className="bg-emerald-500 h-1.5 rounded-full" style={{width: `${(c.valor / relatorio.totalEntradas) * 100}%`}}></div></div>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-               )}
-
-               {relatorio.categoriasSaida.length > 0 && (
-                  <div>
-                     <h4 className="font-black text-xs uppercase text-slate-800 mb-3 border-b pb-2">Despesas por Categoria</h4>
-                     <div className="space-y-3">
-                        {relatorio.categoriasSaida.map((c, i) => (
-                           <div key={i}>
-                              <div className="flex justify-between text-[10px] font-bold uppercase mb-1"><span>{c.categoria}</span><span>R$ {c.valor.toFixed(2)}</span></div>
-                              <div className="w-full bg-slate-100 rounded-full h-1.5"><div className="bg-rose-500 h-1.5 rounded-full" style={{width: `${(c.valor / relatorio.totalSaidas) * 100}%`}}></div></div>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {loading && (
-        <div className="fixed inset-0 bg-white/80 backdrop-blur-xl flex items-center justify-center z-[300] animate-in fade-in">
-          <div className="flex flex-col items-center gap-8"><div className="relative w-24 h-24"><div className="absolute inset-0 border-8 border-blue-600/10 rounded-full animate-pulse"></div><div className="absolute inset-0 border-8 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div><p className="text-[12px] font-black text-blue-600 uppercase tracking-[0.4em] animate-pulse">BIO GÁS PRO: SINCRONIZANDO</p></div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default App;
+               <div className={`space-y-2 p-4 rounded-2xl ${isLow

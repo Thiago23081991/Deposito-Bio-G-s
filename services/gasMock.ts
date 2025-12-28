@@ -151,16 +151,33 @@ export const gasService = {
     }
   },
   
-  getResumoFinanceiro: async () => { 
-    try { return await callGAS('getResumoFinanceiro'); } 
+  getResumoFinanceiro: async (dataIni?: string, dataFim?: string) => { 
+    try { return await callGAS('getResumoFinanceiro', dataIni, dataFim); } 
     catch { 
       let ent = 0, sai = 0, aRec = 0;
-      mockFinanceiro.forEach(m => { 
+      
+      const parseDate = (str: string) => {
+         // Assumes dd/mm/yyyy
+         if(!str) return 0;
+         const parts = str.split(' ')[0].split('/');
+         return new Date(Number(parts[2]), Number(parts[1])-1, Number(parts[0])).getTime();
+      };
+      
+      const start = dataIni ? new Date(dataIni).getTime() : 0;
+      const end = dataFim ? new Date(dataFim).getTime() + 86400000 : Infinity;
+
+      const filtered = mockFinanceiro.filter(m => {
+         const d = parseDate(m.dataHora);
+         return d >= start && d <= end;
+      });
+
+      filtered.forEach(m => { 
         if(m.tipo === 'Entrada') ent += m.valor; 
         else if(m.tipo === 'Saída') sai += m.valor;
         else if(m.tipo === 'A Receber') aRec += m.valor;
       });
-      return { totalEntradas: ent, totalSaidas: sai, totalAReceber: aRec, saldo: ent - sai, porMetodo: {}, recentes: mockFinanceiro.slice(0, 50) }; 
+      
+      return { totalEntradas: ent, totalSaidas: sai, totalAReceber: aRec, saldo: ent - sai, porMetodo: {}, recentes: filtered.slice(0, 100) }; 
     } 
   },
 
@@ -200,4 +217,9 @@ export const gasService = {
   },
   
   listarUltimosPedidos: async () => { try { return await callGAS('listarUltimosPedidos'); } catch { return mockPedidos.slice(0, 30); } },
+
+  buscarPedidoPorId: async (id: string) => {
+    try { return await callGAS('buscarPedidoPorId', id); }
+    catch { return mockPedidos.find(p => p.id === id) || null; }
+  }
 };
