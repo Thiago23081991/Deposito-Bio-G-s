@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { gasService } from './services/gasMock.ts';
-import { Cliente, Produto, Entregador, Pedido, PaymentMethod, ResumoFinanceiro, PedidoItem, Movimentacao, RelatorioMensal } from './types.ts';
+import { Cliente, Produto, Entregador, Pedido, PaymentMethod, ResumoFinanceiro, PedidoItem, Movimentacao, RelatorioMensal, ChatMessage } from './types.ts';
 import * as XLSX from 'xlsx';
+import { GoogleGenAI } from "@google/genai";
 
 const App: React.FC = () => {
   // --- ESTADO GLOBAL ---
-  const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores'>('vendas');
+  const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores' | 'marketing'>('vendas');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -22,7 +23,15 @@ const App: React.FC = () => {
   const [isTrackingMode, setIsTrackingMode] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodePedido, setQrCodePedido] = useState<Pedido | null>(null);
-  const [depositoOrigem, setDepositoOrigem] = useState('Centro'); // Padrão: Centro da cidade ou ajuste conforme necessário
+  const [depositoOrigem, setDepositoOrigem] = useState('Centro'); 
+
+  // --- MARKETING IA ---
+  const [marketingChat, setMarketingChat] = useState<ChatMessage[]>([
+    { role: 'model', text: 'Olá! Sou seu assistente de Marketing da Bio Gás. Posso criar promoções, textos para WhatsApp ou ideias para campanhas. O que vamos criar hoje?', timestamp: new Date() }
+  ]);
+  const [marketingInput, setMarketingInput] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // --- FILTRO CAIXA ---
   const [caixaDataIni, setCaixaDataIni] = useState(() => {
@@ -77,7 +86,6 @@ const App: React.FC = () => {
 
   // --- INITIAL LOAD & TRACKING CHECK ---
   useEffect(() => {
-    // Check for tracking param
     const params = new URLSearchParams(window.location.search);
     const trackingId = params.get('tracking');
 
@@ -95,6 +103,11 @@ const App: React.FC = () => {
       loadData();
     }
   }, []);
+
+  // --- SCROLL TO BOTTOM MARKETING ---
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [marketingChat]);
 
   // --- FLUXO DE CAIXA DIÁRIO ---
   const fluxoCaixaDiario = useMemo(() => {
@@ -153,6 +166,48 @@ const App: React.FC = () => {
     }
   }, [caixaDataIni, caixaDataFim]);
 
+  // --- LOGIC: MARKETING AI ---
+  const handleSendMarketingMessage = async () => {
+    if (!marketingInput.trim()) return;
+
+    const userMsg = marketingInput;
+    setMarketingInput('');
+    setMarketingChat(prev => [...prev, { role: 'user', text: userMsg, timestamp: new Date() }]);
+    setIsGenerating(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      const systemContext = `
+        Você é um especialista em Marketing Digital para uma distribuidora de Gás e Água chamada "Bio Gás PRO".
+        Seu tom deve ser amigável, vendedor e usar emojis.
+        Foque em criar mensagens curtas para WhatsApp, ideias de promoções relâmpago e campanhas de fidelidade.
+        Produtos principais: Gás P13 (Cozinha) e Água Mineral 20L.
+        Destaque sempre a "Entrega Rápida" e o "Melhor Preço da Região".
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: userMsg,
+        config: {
+          systemInstruction: systemContext,
+          temperature: 0.8
+        }
+      });
+
+      const text = response.text;
+      if (text) {
+        setMarketingChat(prev => [...prev, { role: 'model', text: text, timestamp: new Date() }]);
+      }
+    } catch (error) {
+      console.error(error);
+      setMessage({ type: 'error', text: 'Erro ao gerar conteúdo. Verifique sua API Key.' });
+      setMarketingChat(prev => [...prev, { role: 'model', text: 'Desculpe, tive um problema ao criar o conteúdo. Verifique se a chave de API está configurada.', timestamp: new Date() }]);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   // --- QR CODE GENERATION ---
   const handleGenerateQR = (pedido: Pedido) => {
     setQrCodePedido(pedido);
@@ -160,7 +215,6 @@ const App: React.FC = () => {
   };
 
   const getMapsLink = (enderecoCliente: string) => {
-    // Gera link do Google Maps: Depósito (Origem) -> Cliente (Destino)
     return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(depositoOrigem)}&destination=${encodeURIComponent(enderecoCliente)}&travelmode=driving`;
   };
 
@@ -268,7 +322,7 @@ const App: React.FC = () => {
     }
   };
 
-  // --- ENVIO RECIBO WHATSAPP ---
+  // --- ENVIO RECIBO WHATSAPP (MANUAL) ---
   const handleSendReceiptWhatsApp = () => {
     if (cart.length === 0) {
       setMessage({ type: 'error', text: 'Carrinho vazio!' });
@@ -295,7 +349,6 @@ const App: React.FC = () => {
     msg += `✅ _Obrigado pela preferência!_`;
     
     const phone = telBusca ? telBusca.replace(/\D/g, '') : '';
-    // Se tiver telefone, abre direto a conversa com o prefixo 55, senão abre seleção de contato
     const url = phone 
       ? `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`
       : `https://wa.me/?text=${encodeURIComponent(msg)}`;
@@ -635,13 +688,33 @@ const App: React.FC = () => {
                  <button onClick={async () => {
                     setLoading(true);
                     try {
+                      // Capture snapshot for WhatsApp before clearing state
+                      const snapshotCart = [...cart];
+                      const snapshotTotal = cartTotal;
+                      const snapshotNome = nomeBusca || 'Cliente';
+                      const snapshotTel = telBusca;
+                      const snapshotPgto = formaPgto;
+
                       const res = await gasService.salvarPedido({ nomeCliente: nomeBusca, telefoneCliente: telBusca, endereco: endBusca, itens: cart, valorTotal: cartTotal, entregador: selectedEntregador || 'Logística', formaPagamento: formaPgto });
-                      setCart([]); setNomeBusca(''); setTelBusca(''); setEndBusca(''); setSelectedEntregador(''); await loadData(true);
+                      
+                      // Clear State
+                      setCart([]); setNomeBusca(''); setTelBusca(''); setEndBusca(''); setSelectedEntregador(''); 
+                      await loadData(true);
                       setMessage({ type: 'success', text: 'Venda registrada com sucesso!' });
                       
+                      // AUTOMATIC WHATSAPP NOTIFICATION WITH 30 MIN ESTIMATE
+                      if (snapshotTel) {
+                        const itensMsg = snapshotCart.map(i => `• ${i.qtd}x ${i.nome}`).join('\n');
+                        const msg = `*✅ PEDIDO CONFIRMADO!*\n\nOlá *${snapshotNome}*, obrigado pela preferência!\n\n🛒 *Resumo do Pedido:*\n${itensMsg}\n\n💰 *Total:* R$ ${snapshotTotal.toFixed(2)}\n💳 *Pagamento:* ${snapshotPgto}\n\n🚀 *Tempo Estimado de Entrega:*\n🕒 *30 Minutos*\n\n_Já estamos preparando sua entrega! 🛵_`;
+                        
+                        const link = `https://wa.me/55${snapshotTel.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
+                        // Small delay to ensure UI updates first
+                        setTimeout(() => window.open(link, '_blank'), 500);
+                      }
+
                       // Auto-open QR Code modal after sale
                       if (res.id) {
-                         const newOrder = { id: res.id, nomeCliente: nomeBusca, telefoneCliente: telBusca, endereco: endBusca, valorTotal: cartTotal, status: 'Pendente', itens: cart } as Pedido;
+                         const newOrder = { id: res.id, nomeCliente: snapshotNome, telefoneCliente: snapshotTel, endereco: endBusca, valorTotal: snapshotTotal, status: 'Pendente', itens: snapshotCart } as Pedido;
                          handleGenerateQR(newOrder);
                       }
                     } finally { setLoading(false); }
@@ -765,4 +838,567 @@ const App: React.FC = () => {
                </div>
                <h4 className="font-black text-slate-800 text-base uppercase mb-1 truncate">{p.nome}</h4>
                <p className="text-[10px] text-slate-400 font-bold mb-4 uppercase">{p.id}</p>
-               <div className={`space-y-2 p-4 rounded-2xl ${isLow
+               <div className={`space-y-2 p-4 rounded-2xl ${isLowStock ? 'bg-white' : 'bg-slate-50'}`}>
+                  <div className="flex justify-between text-xs font-bold uppercase"><span>Venda</span><span className="text-emerald-600">R$ {p.preco.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-xs font-bold uppercase"><span>Custo</span><span className="text-slate-500">R$ {p.precoCusto.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-xs font-bold uppercase pt-2 border-t border-slate-200"><span>Margem</span><span className="text-blue-600">{((p.preco - p.precoCusto) / p.preco * 100).toFixed(0)}%</span></div>
+               </div>
+               <div className="mt-4 flex items-center gap-2">
+                 <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${isLowStock ? 'bg-rose-500' : 'bg-blue-600'}`} style={{ width: `${Math.min(100, (p.estoque / 100) * 100)}%` }}></div>
+                 </div>
+                 <span className={`text-xs font-black ${isLowStock ? 'text-rose-600' : 'text-slate-600'}`}>{p.estoque} un</span>
+               </div>
+            </div>
+            );
+         })}
+      </div>
+    </div>
+  );
+
+  const renderCaixa = () => {
+    return (
+      <div className="space-y-8 animate-in fade-in">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 uppercase">💰 Fluxo de Caixa</h2>
+            <p className="text-[10px] font-black text-slate-400 uppercase mt-1">Gestão Financeira Completa</p>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border">
+            <input type="date" className="bg-transparent border-none text-xs font-bold text-slate-600 outline-none" value={caixaDataIni} onChange={e => setCaixaDataIni(e.target.value)} />
+            <span className="text-slate-300 font-black">→</span>
+            <input type="date" className="bg-transparent border-none text-xs font-bold text-slate-600 outline-none" value={caixaDataFim} onChange={e => setCaixaDataFim(e.target.value)} />
+            <button onClick={() => loadData()} className="w-8 h-8 flex items-center justify-center bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition"><i className="fas fa-sync-alt text-xs"></i></button>
+          </div>
+          <div className="flex gap-2">
+             <button onClick={handleGerarRelatorio} className="px-5 py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase hover:bg-slate-200 transition"><i className="fas fa-chart-pie mr-1"></i> Relatório</button>
+             <button onClick={() => { setMovimentacaoForm({ tipo: 'Entrada', descricao: '', valor: '', categoria: 'Geral' }); setShowFinanceiroModal(true); }} className="px-5 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-blue-700 transition">+ Lançamento</button>
+          </div>
+        </div>
+
+        {/* Cards Resumo */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white p-6 rounded-[30px] border border-slate-100 shadow-lg relative overflow-hidden">
+             <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-50 rounded-full opacity-50"></div>
+             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Entradas</p>
+             <h3 className="text-3xl font-black text-emerald-600">R$ {resumo?.totalEntradas.toFixed(2)}</h3>
+          </div>
+          <div className="bg-white p-6 rounded-[30px] border border-slate-100 shadow-lg relative overflow-hidden">
+             <div className="absolute -right-4 -top-4 w-24 h-24 bg-rose-50 rounded-full opacity-50"></div>
+             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Saídas</p>
+             <h3 className="text-3xl font-black text-rose-600">R$ {resumo?.totalSaidas.toFixed(2)}</h3>
+          </div>
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-6 rounded-[30px] shadow-xl text-white relative overflow-hidden">
+             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Saldo Líquido</p>
+             <h3 className="text-3xl font-black text-white">R$ {resumo?.saldo.toFixed(2)}</h3>
+          </div>
+        </div>
+
+        {/* Tabela de Movimentações */}
+        <div className="bg-white rounded-[30px] border border-slate-100 shadow-xl overflow-hidden">
+           <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
+              <h3 className="font-black text-slate-800 text-xs uppercase tracking-widest">Movimentações Recentes</h3>
+              {selectedMovimentacaoIds.length > 0 && (
+                <div className="flex items-center gap-4 bg-blue-50 px-4 py-2 rounded-xl">
+                   <span className="text-xs font-bold text-blue-700">{selectedMovimentacaoIds.length} selecionados</span>
+                   <span className="text-xs font-black text-blue-900">Total: R$ {totalSelecionadoFinanceiro.toFixed(2)}</span>
+                   <button onClick={handleExportMovimentacoes} className="text-[10px] bg-white border border-blue-200 text-blue-700 px-3 py-1 rounded-lg uppercase font-bold hover:bg-blue-100">Exportar Excel</button>
+                </div>
+              )}
+           </div>
+           <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b">
+                 <tr>
+                    <th className="px-6 py-4 w-10"><input type="checkbox" onChange={(e) => {
+                      if(e.target.checked && resumo?.recentes) setSelectedMovimentacaoIds(resumo.recentes.map(m => m.id));
+                      else setSelectedMovimentacaoIds([]);
+                    }} className="rounded text-blue-600" /></th>
+                    {['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor'].map(h => <th key={h} className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>)}
+                 </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                 {resumo?.recentes.map(m => (
+                    <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                       <td className="px-6 py-4"><input type="checkbox" checked={selectedMovimentacaoIds.includes(m.id)} onChange={() => {
+                         if(selectedMovimentacaoIds.includes(m.id)) setSelectedMovimentacaoIds(prev => prev.filter(id => id !== m.id));
+                         else setSelectedMovimentacaoIds(prev => [...prev, m.id]);
+                       }} className="rounded text-blue-600" /></td>
+                       <td className="px-6 py-4 text-[10px] font-bold text-slate-500">{m.dataHora}</td>
+                       <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-600' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>{m.tipo}</span></td>
+                       <td className="px-6 py-4 font-bold text-slate-800 text-xs">{m.descricao}</td>
+                       <td className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase">{m.categoria}</td>
+                       <td className={`px-6 py-4 font-black text-xs ${m.tipo === 'Entrada' ? 'text-emerald-600' : m.tipo === 'Saída' ? 'text-rose-600' : 'text-slate-400'}`}>R$ {m.valor.toFixed(2)}</td>
+                    </tr>
+                 ))}
+                 {(!resumo?.recentes || resumo.recentes.length === 0) && (
+                    <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold text-xs uppercase">Nenhuma movimentação no período</td></tr>
+                 )}
+              </tbody>
+           </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderClientes = () => {
+    const filteredClientes = clientes.filter(c => 
+      c.nome.toLowerCase().includes(searchTermCRM.toLowerCase()) || 
+      c.telefone.includes(searchTermCRM) ||
+      c.endereco.toLowerCase().includes(searchTermCRM.toLowerCase())
+    );
+
+    return (
+      <div className="space-y-8 animate-in fade-in">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 uppercase">👥 Clientes (CRM)</h2>
+            <p className="text-[10px] font-black text-slate-400 uppercase mt-1">Base de Contatos e Histórico</p>
+          </div>
+          <div className="flex gap-2 w-full md:w-auto">
+             <div className="relative flex-1 md:w-64">
+                <input className="w-full pl-10 pr-4 py-3 bg-slate-50 border-none rounded-xl font-bold text-xs" placeholder="Buscar cliente..." value={searchTermCRM} onChange={e => setSearchTermCRM(e.target.value)} />
+                <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+             </div>
+             <label className="flex items-center gap-2 px-5 py-3 bg-emerald-500 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-emerald-600 transition cursor-pointer">
+                <i className="fas fa-file-excel text-sm"></i> Importar Excel
+                <input type="file" ref={fileInputRef} onChange={handleImportExcel} accept=".xlsx, .xls" className="hidden" />
+             </label>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-[30px] border border-slate-100 shadow-xl overflow-hidden">
+           <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b">
+                 <tr>{['Nome', 'Telefone', 'Endereço', 'Bairro', 'Cadastro', 'Ações'].map(h => <th key={h} className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                 {filteredClientes.map(c => (
+                    <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                       <td className="px-6 py-4 font-black text-slate-800 text-xs uppercase">{c.nome}</td>
+                       <td className="px-6 py-4 text-xs font-bold text-blue-600">{c.telefone}</td>
+                       <td className="px-6 py-4 text-xs font-bold text-slate-500">{c.endereco}</td>
+                       <td className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase">{c.bairro}</td>
+                       <td className="px-6 py-4 text-[10px] font-bold text-slate-400">{c.dataCadastro}</td>
+                       <td className="px-6 py-4">
+                          <div className="flex gap-2">
+                             <button onClick={() => window.open(`https://wa.me/55${c.telefone.replace(/\D/g,'')}`, '_blank')} className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white transition flex items-center justify-center"><i className="fab fa-whatsapp"></i></button>
+                             <button onClick={() => {
+                                setNomeBusca(c.nome); setTelBusca(c.telefone); setEndBusca(c.endereco);
+                                setActiveTab('vendas');
+                             }} className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white transition flex items-center justify-center" title="Novo Pedido"><i className="fas fa-cart-plus"></i></button>
+                          </div>
+                       </td>
+                    </tr>
+                 ))}
+                 {filteredClientes.length === 0 && (
+                    <tr><td colSpan={6} className="p-10 text-center text-slate-300 font-bold uppercase">Nenhum cliente encontrado</td></tr>
+                 )}
+              </tbody>
+           </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderMarketing = () => {
+    return (
+      <div className="h-[calc(100vh-8rem)] flex flex-col space-y-4 animate-in fade-in">
+        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-xl flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 uppercase">🚀 Marketing Inteligente</h2>
+            <p className="text-[10px] font-black text-slate-400 uppercase mt-1">Crie posts, legendas e promoções com IA</p>
+          </div>
+          <div className="w-12 h-12 bg-gradient-to-tr from-purple-500 to-blue-500 rounded-full flex items-center justify-center shadow-lg shadow-purple-200">
+            <i className="fas fa-magic text-white text-xl"></i>
+          </div>
+        </div>
+
+        <div className="flex-1 bg-white rounded-[30px] shadow-xl border border-slate-100 overflow-hidden flex flex-col">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-slate-50/50">
+            {marketingChat.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[80%] rounded-2xl p-5 shadow-sm ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-slate-700 border border-slate-100 rounded-bl-none'}`}>
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap font-medium">{msg.text}</div>
+                  {msg.role === 'model' && (
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex gap-2 justify-end">
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(msg.text);
+                          setMessage({ type: 'success', text: 'Texto copiado!' });
+                        }}
+                        className="text-[10px] uppercase font-black text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors"
+                      >
+                        <i className="fas fa-copy"></i> Copiar
+                      </button>
+                      <button 
+                        onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(msg.text)}`, '_blank')}
+                        className="text-[10px] uppercase font-black text-slate-400 hover:text-emerald-500 flex items-center gap-1 transition-colors"
+                      >
+                        <i className="fab fa-whatsapp"></i> Enviar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {isGenerating && (
+              <div className="flex justify-start">
+                <div className="bg-white p-4 rounded-2xl rounded-bl-none shadow-sm border border-slate-100 flex items-center gap-1">
+                   <div className="w-2 h-2 bg-slate-400 rounded-full typing-dot"></div>
+                   <div className="w-2 h-2 bg-slate-400 rounded-full typing-dot"></div>
+                   <div className="w-2 h-2 bg-slate-400 rounded-full typing-dot"></div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="p-4 bg-white border-t border-slate-100">
+             <div className="relative flex items-center gap-2">
+                <input 
+                  value={marketingInput}
+                  onChange={(e) => setMarketingInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !isGenerating && handleSendMarketingMessage()}
+                  placeholder="Ex: Crie uma promoção de Gás para o fim de semana..." 
+                  className="w-full pl-5 pr-14 py-4 bg-slate-50 border-none rounded-2xl font-bold text-sm focus:ring-2 focus:ring-blue-100 transition-all outline-none"
+                  disabled={isGenerating}
+                />
+                <button 
+                  onClick={handleSendMarketingMessage}
+                  disabled={isGenerating || !marketingInput.trim()}
+                  className="absolute right-2 p-3 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <i className="fas fa-paper-plane"></i>
+                </button>
+             </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex min-h-screen bg-[#F8FAFC]">
+      {/* SIDEBAR NAVIGATION */}
+      <aside className="w-20 lg:w-64 bg-white border-r border-slate-200 fixed h-full z-20 hidden md:flex flex-col justify-between transition-all">
+         <div>
+            <div className="h-24 flex items-center justify-center border-b border-slate-100">
+               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-lg shadow-blue-200">B</div>
+               <span className="ml-3 font-black text-xl text-slate-800 tracking-tight hidden lg:block">Bio Gás</span>
+            </div>
+            <nav className="p-4 space-y-2">
+               {[
+                  { id: 'vendas', icon: 'fa-cash-register', label: 'Vendas' },
+                  { id: 'caixa', icon: 'fa-chart-pie', label: 'Fluxo Caixa' },
+                  { id: 'clientes', icon: 'fa-users', label: 'Clientes' },
+                  { id: 'cobranca', icon: 'fa-hand-holding-dollar', label: 'Cobrança' },
+                  { id: 'estoque', icon: 'fa-boxes-stacked', label: 'Estoque' },
+                  { id: 'entregadores', icon: 'fa-motorcycle', label: 'Equipe' },
+                  { id: 'marketing', icon: 'fa-bullhorn', label: 'Marketing IA' },
+               ].map(item => (
+                  <button key={item.id} onClick={() => setActiveTab(item.id as any)} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${activeTab === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'}`}>
+                     <i className={`fas ${item.icon} w-6 text-center text-lg`}></i>
+                     <span className="font-bold text-sm hidden lg:block">{item.label}</span>
+                  </button>
+               ))}
+            </nav>
+         </div>
+         <div className="p-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hidden lg:block">
+               <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Status do Sistema</p>
+               <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                  <span className="text-xs font-bold text-slate-600">Online</span>
+               </div>
+            </div>
+         </div>
+      </aside>
+
+      {/* MOBILE NAV BOTTOM */}
+      <div className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 z-50 flex justify-around p-2 pb-safe">
+         {[
+             { id: 'vendas', icon: 'fa-cash-register' },
+             { id: 'caixa', icon: 'fa-chart-pie' },
+             { id: 'clientes', icon: 'fa-users' },
+             { id: 'marketing', icon: 'fa-bullhorn' },
+             { id: 'estoque', icon: 'fa-box' }
+         ].map(item => (
+             <button key={item.id} onClick={() => setActiveTab(item.id as any)} className={`p-4 rounded-2xl ${activeTab === item.id ? 'text-blue-600 bg-blue-50' : 'text-slate-300'}`}>
+                <i className={`fas ${item.icon} text-xl`}></i>
+             </button>
+         ))}
+      </div>
+
+      <main className="flex-1 md:ml-20 lg:ml-64 p-6 lg:p-10 mb-20 md:mb-0">
+         {/* HEADER MOBILE */}
+         <div className="md:hidden flex justify-between items-center mb-6">
+            <div className="flex items-center gap-2">
+               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-black">B</div>
+               <span className="font-black text-slate-800">Bio Gás PRO</span>
+            </div>
+         </div>
+
+         {/* MESSAGE TOAST */}
+         {message && (
+            <div className={`fixed top-6 right-6 px-6 py-4 rounded-2xl shadow-2xl z-50 text-white font-bold text-sm flex items-center gap-3 animate-in slide-in-from-right ${message.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
+               <i className={`fas ${message.type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`}></i>
+               {message.text}
+               <button onClick={() => setMessage(null)} className="ml-2 opacity-50 hover:opacity-100">×</button>
+            </div>
+         )}
+         
+         {/* LOADING OVERLAY */}
+         {loading && (
+            <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex items-center justify-center">
+               <div className="flex flex-col items-center gap-4">
+                  <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+                  <p className="text-slate-400 font-bold text-xs uppercase tracking-widest animate-pulse">Processando...</p>
+               </div>
+            </div>
+         )}
+
+         {/* CONTENT */}
+         <div className="max-w-7xl mx-auto">
+            {activeTab === 'vendas' && renderVendas()}
+            {activeTab === 'caixa' && renderCaixa()}
+            {activeTab === 'cobranca' && renderCobranca()}
+            {activeTab === 'estoque' && renderEstoque()}
+            {activeTab === 'clientes' && renderClientes()}
+            {activeTab === 'entregadores' && renderEntregadores()}
+            {activeTab === 'marketing' && renderMarketing()}
+         </div>
+      </main>
+
+      {/* --- MODALS --- */}
+
+      {/* MODAL QR CODE */}
+      {showQRModal && qrCodePedido && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-[30px] p-8 w-full max-w-sm text-center shadow-2xl animate-in zoom-in-95">
+               <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl"><i className="fas fa-qrcode"></i></div>
+               <h3 className="text-xl font-black text-slate-800 uppercase mb-2">Pedido #{qrCodePedido.id}</h3>
+               <p className="text-xs text-slate-400 font-bold mb-6">Escaneie para rastrear o pedido</p>
+               
+               <div className="bg-white p-4 rounded-xl border-2 border-slate-100 inline-block mb-6">
+                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + window.location.pathname + '?tracking=' + qrCodePedido.id)}`} alt="QR Code" className="w-48 h-48" />
+               </div>
+
+               <div className="space-y-3">
+                  <button onClick={() => {
+                     const link = window.location.origin + window.location.pathname + '?tracking=' + qrCodePedido.id;
+                     navigator.clipboard.writeText(link);
+                     setMessage({type: 'success', text: 'Link copiado!'});
+                  }} className="w-full py-3 bg-slate-100 text-slate-600 font-black rounded-xl text-xs uppercase hover:bg-slate-200 transition">Copiar Link</button>
+                  <button onClick={() => setShowQRModal(false)} className="w-full py-3 text-slate-400 font-bold text-xs uppercase hover:text-slate-600">Fechar</button>
+               </div>
+            </div>
+         </div>
+      )}
+
+      {/* MODAL ENTREGADOR */}
+      {showEntregadorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[30px] p-8 w-full max-w-md shadow-2xl">
+            <h3 className="text-xl font-black text-slate-800 uppercase mb-6">Gerenciar Entregador</h3>
+            <div className="space-y-4">
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Nome Completo" value={novoEntregador.nome} onChange={e => setNovoEntregador({...novoEntregador, nome: e.target.value})} />
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Telefone (WhatsApp)" value={novoEntregador.telefone} onChange={e => setNovoEntregador({...novoEntregador, telefone: e.target.value})} />
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Veículo (Modelo/Placa)" value={novoEntregador.veiculo} onChange={e => setNovoEntregador({...novoEntregador, veiculo: e.target.value})} />
+              <select className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" value={novoEntregador.status} onChange={e => setNovoEntregador({...novoEntregador, status: e.target.value as any})}>
+                <option value="Ativo">Ativo</option>
+                <option value="Inativo">Inativo</option>
+              </select>
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <button onClick={() => setShowEntregadorModal(false)} className="py-3 bg-slate-100 text-slate-500 font-black rounded-xl text-xs uppercase hover:bg-slate-200">Cancelar</button>
+                <button onClick={async () => {
+                  setLoading(true);
+                  try {
+                    await gasService.salvarEntregador(novoEntregador);
+                    setShowEntregadorModal(false);
+                    await loadData(true);
+                    setMessage({ type: 'success', text: 'Entregador salvo!' });
+                  } finally { setLoading(false); }
+                }} className="py-3 bg-blue-600 text-white font-black rounded-xl text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200">Salvar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PRODUTO */}
+      {showProdutoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[30px] p-8 w-full max-w-md shadow-2xl">
+            <h3 className="text-xl font-black text-slate-800 uppercase mb-6">Gerenciar Produto</h3>
+            <div className="space-y-4">
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Nome do Produto" value={novoProduto.nome} onChange={e => setNovoProduto({...novoProduto, nome: e.target.value})} />
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Preço Venda</label>
+                    <input type="number" className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Preço" value={novoProduto.preco} onChange={e => setNovoProduto({...novoProduto, preco: Number(e.target.value)})} />
+                 </div>
+                 <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Preço Custo</label>
+                    <input type="number" className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Custo" value={novoProduto.precoCusto} onChange={e => setNovoProduto({...novoProduto, precoCusto: Number(e.target.value)})} />
+                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Estoque</label>
+                    <input type="number" className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Estoque" value={novoProduto.estoque} onChange={e => setNovoProduto({...novoProduto, estoque: Number(e.target.value)})} />
+                 </div>
+                 <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Unidade</label>
+                    <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Un (kg, un)" value={novoProduto.unidadeMedida} onChange={e => setNovoProduto({...novoProduto, unidadeMedida: e.target.value})} />
+                 </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <button onClick={() => setShowProdutoModal(false)} className="py-3 bg-slate-100 text-slate-500 font-black rounded-xl text-xs uppercase hover:bg-slate-200">Cancelar</button>
+                <button onClick={async () => {
+                  setLoading(true);
+                  try {
+                    await gasService.salvarProduto(novoProduto);
+                    setShowProdutoModal(false);
+                    await loadData(true);
+                    setMessage({ type: 'success', text: 'Produto salvo!' });
+                  } finally { setLoading(false); }
+                }} className="py-3 bg-blue-600 text-white font-black rounded-xl text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200">Salvar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FINANCEIRO LANÇAMENTO */}
+      {showFinanceiroModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[30px] p-8 w-full max-w-md shadow-2xl">
+            <h3 className="text-xl font-black text-slate-800 uppercase mb-6">Novo Lançamento</h3>
+            <div className="space-y-4">
+              <div className="flex bg-slate-100 p-1 rounded-xl">
+                 {['Entrada', 'Saída'].map(t => (
+                    <button key={t} onClick={() => setMovimentacaoForm({...movimentacaoForm, tipo: t})} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition ${movimentacaoForm.tipo === t ? (t === 'Entrada' ? 'bg-emerald-500 text-white shadow-lg' : 'bg-rose-500 text-white shadow-lg') : 'text-slate-400'}`}>{t}</button>
+                 ))}
+              </div>
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Descrição (Ex: Conta de Luz)" value={movimentacaoForm.descricao} onChange={e => setMovimentacaoForm({...movimentacaoForm, descricao: e.target.value})} />
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Valor (R$)" type="number" value={movimentacaoForm.valor} onChange={e => setMovimentacaoForm({...movimentacaoForm, valor: e.target.value})} />
+              <select className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" value={movimentacaoForm.categoria} onChange={e => setMovimentacaoForm({...movimentacaoForm, categoria: e.target.value})}>
+                 <option value="Geral">Geral</option>
+                 <option value="Vendas">Vendas</option>
+                 <option value="Despesas Operacionais">Despesas Operacionais</option>
+                 <option value="Fornecedores">Fornecedores</option>
+                 <option value="Pessoal">Pessoal</option>
+              </select>
+              
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <button onClick={() => setShowFinanceiroModal(false)} className="py-3 bg-slate-100 text-slate-500 font-black rounded-xl text-xs uppercase hover:bg-slate-200">Cancelar</button>
+                <button onClick={async () => {
+                   if(!movimentacaoForm.descricao || !movimentacaoForm.valor) return;
+                   setLoading(true);
+                   try {
+                      await gasService.registrarMovimentacao(movimentacaoForm.tipo, Number(movimentacaoForm.valor), movimentacaoForm.descricao, movimentacaoForm.categoria, 'Manual', 'Lançamento Manual App');
+                      setShowFinanceiroModal(false);
+                      await loadData(true);
+                      setMessage({ type: 'success', text: 'Lançamento registrado!' });
+                   } finally { setLoading(false); }
+                }} className="py-3 bg-blue-600 text-white font-black rounded-xl text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200">Salvar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL BAIXA DÍVIDA */}
+      {showBaixaModal && selectedDivida && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+           <div className="bg-white rounded-[30px] p-8 w-full max-w-sm shadow-2xl">
+              <div className="text-center mb-6">
+                 <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl"><i className="fas fa-hand-holding-dollar"></i></div>
+                 <h3 className="text-lg font-black text-slate-800 uppercase">Receber Pagamento</h3>
+                 <p className="text-xs text-slate-500 mt-2 font-bold">{selectedDivida.descricao}</p>
+                 <h2 className="text-3xl font-black text-emerald-600 mt-2">R$ {selectedDivida.valor.toFixed(2)}</h2>
+              </div>
+              
+              <div className="space-y-4">
+                 <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Método de Pagamento</label>
+                    <select className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" value={metodoBaixa} onChange={e => setMetodoBaixa(e.target.value)}>
+                       {Object.values(PaymentMethod).filter(m => m !== 'A Receber').map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                 </div>
+                 <button onClick={async () => {
+                    setLoading(true);
+                    try {
+                       await gasService.liquidarDivida(selectedDivida.id, metodoBaixa);
+                       setShowBaixaModal(false);
+                       await loadData(true);
+                       setMessage({ type: 'success', text: 'Dívida liquidada com sucesso!' });
+                    } finally { setLoading(false); }
+                 }} className="w-full py-4 bg-emerald-500 text-white font-black rounded-xl text-xs uppercase hover:bg-emerald-600 shadow-lg shadow-emerald-200 transition">Confirmar Recebimento</button>
+                 <button onClick={() => setShowBaixaModal(false)} className="w-full py-3 text-slate-400 font-bold text-xs uppercase hover:text-slate-600">Cancelar</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* MODAL RELATÓRIO */}
+      {showRelatorioModal && relatorio && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-[30px] p-0 w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+               <div className="bg-blue-600 p-6 text-white text-center">
+                  <h3 className="text-lg font-black uppercase">Relatório Mensal</h3>
+                  <p className="opacity-80 text-sm font-medium">{relatorio.mes}</p>
+               </div>
+               <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                     <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-center">
+                        <p className="text-[10px] uppercase font-black text-emerald-400">Entradas</p>
+                        <p className="text-xl font-black text-emerald-600">R$ {relatorio.totalEntradas.toFixed(2)}</p>
+                     </div>
+                     <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100 text-center">
+                        <p className="text-[10px] uppercase font-black text-rose-400">Saídas</p>
+                        <p className="text-xl font-black text-rose-600">R$ {relatorio.totalSaidas.toFixed(2)}</p>
+                     </div>
+                  </div>
+                  <div className="bg-slate-900 p-4 rounded-2xl text-center text-white">
+                     <p className="text-[10px] uppercase font-black text-slate-400">Saldo Final</p>
+                     <p className="text-3xl font-black">R$ {relatorio.saldo.toFixed(2)}</p>
+                  </div>
+
+                  <div>
+                     <h4 className="text-xs font-black text-slate-400 uppercase border-b pb-2 mb-3">Detalhamento de Entradas</h4>
+                     <div className="space-y-2">
+                        {relatorio.categoriasEntrada.map((c, idx) => (
+                           <div key={idx} className="flex justify-between text-xs font-bold text-slate-600">
+                              <span>{c.categoria}</span>
+                              <span>R$ {c.valor.toFixed(2)}</span>
+                           </div>
+                        ))}
+                     </div>
+                  </div>
+
+                  <div>
+                     <h4 className="text-xs font-black text-slate-400 uppercase border-b pb-2 mb-3">Detalhamento de Saídas</h4>
+                     <div className="space-y-2">
+                        {relatorio.categoriasSaida.map((c, idx) => (
+                           <div key={idx} className="flex justify-between text-xs font-bold text-slate-600">
+                              <span>{c.categoria}</span>
+                              <span>R$ {c.valor.toFixed(2)}</span>
+                           </div>
+                        ))}
+                     </div>
+                  </div>
+               </div>
+               <div className="p-4 bg-slate-50 border-t text-center">
+                  <button onClick={() => setShowRelatorioModal(false)} className="px-8 py-3 bg-white border border-slate-200 rounded-xl font-black text-xs uppercase text-slate-600 hover:bg-slate-100">Fechar</button>
+               </div>
+            </div>
+         </div>
+      )}
+
+    </div>
+  );
+};
+
+export default App;

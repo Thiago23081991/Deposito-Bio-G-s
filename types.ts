@@ -76,6 +76,12 @@ export interface RelatorioMensal {
   categoriasSaida: { categoria: string; valor: number }[];
 }
 
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  timestamp: Date;
+}
+
 export enum PaymentMethod {
   DINHEIRO = 'Dinheiro',
   PIX = 'PIX',

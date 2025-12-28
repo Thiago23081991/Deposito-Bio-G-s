@@ -11,7 +11,8 @@
   "dependencies": {
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "xlsx": "0.18.5"
+    "xlsx": "0.18.5",
+    "@google/genai": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
