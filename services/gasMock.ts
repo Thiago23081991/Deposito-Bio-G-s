@@ -212,7 +212,8 @@ export const gasService = {
         totalSaidas: sai,
         saldo: ent - sai,
         categoriasEntrada: Object.entries(catsEnt).map(([k, v]) => ({ categoria: k, valor: v })),
-        categoriasSaida: Object.entries(catsSai).map(([k, v]) => ({ categoria: k, valor: v }))
+        categoriasSaida: Object.entries(catsSai).map(([k, v]) => ({ categoria: k, valor: v })),
+        vendasPorProduto: [{ produto: "Gás P13 (Mock)", qtd: 12, valorTotal: 1320 }]
       };
     }
   },

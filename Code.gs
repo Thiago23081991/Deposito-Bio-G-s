@@ -188,16 +188,16 @@ function gerarRelatorioMensal() {
   const sheet = getSheet('Financeiro');
   const data = sheet.getDataRange().getValues();
   const now = new Date();
-  const currentMonthStr = Utilities.formatDate(now, "GMT-3", "/MM/yyyy");
+  const currentMonthStr = Utilities.formatDate(now, "GMT-3", "/MM/yyyy"); // Busca o mês atual
   
   let totalEntradas = 0;
   let totalSaidas = 0;
   const catsEnt = {};
   const catsSai = {};
   
-  // Start from 1 to skip header
+  // 1. Processamento Financeiro
   for (let i = 1; i < data.length; i++) {
-    const dataHora = String(data[i][1]); // Check if matches /MM/yyyy
+    const dataHora = String(data[i][1]); 
     if (dataHora.includes(currentMonthStr)) {
       const tipo = String(data[i][2]).trim();
       const valor = Number(data[i][4]);
@@ -214,6 +214,56 @@ function gerarRelatorioMensal() {
   }
   
   const mapCats = (obj) => Object.keys(obj).map(k => ({ categoria: k, valor: obj[k] }));
+
+  // 2. Processamento de Produtos (Pedidos)
+  const sheetPedidos = getSheet('Pedidos');
+  const dataPedidos = sheetPedidos.getDataRange().getValues();
+  const sheetProdutos = getSheet('Produtos');
+  const dataProdutos = sheetProdutos.getDataRange().getValues();
+  
+  // Mapa de Preços dos Produtos (Nome -> Preço Atual)
+  const mapPrecos = {};
+  for(let i=1; i<dataProdutos.length; i++){
+    mapPrecos[String(dataProdutos[i][1]).trim()] = Number(dataProdutos[i][2]);
+  }
+
+  const statsProdutos = {};
+
+  for (let i = 1; i < dataPedidos.length; i++) {
+    const dataHoraPedido = String(dataPedidos[i][1]);
+    const status = String(dataPedidos[i][8]); // Status (Coluna I)
+
+    // Filtra pelo mês atual e apenas pedidos Entregues (Vendas confirmadas)
+    if (dataHoraPedido.includes(currentMonthStr) && status === 'Entregue') {
+      const itensStr = String(dataPedidos[i][5]); // Coluna F: "2x Gás, 1x Água"
+      if(itensStr){
+        const itensArr = itensStr.split(',');
+        itensArr.forEach(item => {
+          // Parse: "2x Nome do Produto"
+          const parts = item.trim().split('x ');
+          if(parts.length >= 2){
+            const qtd = Number(parts[0]);
+            const nomeProd = parts[1].trim();
+            
+            if(!statsProdutos[nomeProd]) {
+              statsProdutos[nomeProd] = { qtd: 0, valorTotal: 0 };
+            }
+            
+            statsProdutos[nomeProd].qtd += qtd;
+            // Valor Estimado = Qtd * Preço Atual (ja que o historico individual nao esta na string)
+            const precoUnit = mapPrecos[nomeProd] || 0;
+            statsProdutos[nomeProd].valorTotal += (qtd * precoUnit);
+          }
+        });
+      }
+    }
+  }
+
+  const arrayProdutos = Object.keys(statsProdutos).map(k => ({
+    produto: k,
+    qtd: statsProdutos[k].qtd,
+    valorTotal: statsProdutos[k].valorTotal
+  })).sort((a,b) => b.valorTotal - a.valorTotal); // Ordena por maior valor
   
   return {
     mes: Utilities.formatDate(now, "GMT-3", "MMMM/yyyy"),
@@ -221,7 +271,8 @@ function gerarRelatorioMensal() {
     totalSaidas: totalSaidas,
     saldo: totalEntradas - totalSaidas,
     categoriasEntrada: mapCats(catsEnt),
-    categoriasSaida: mapCats(catsSai)
+    categoriasSaida: mapCats(catsSai),
+    vendasPorProduto: arrayProdutos
   };
 }
 

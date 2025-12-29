@@ -74,6 +74,7 @@ export interface RelatorioMensal {
   saldo: number;
   categoriasEntrada: { categoria: string; valor: number }[];
   categoriasSaida: { categoria: string; valor: number }[];
+  vendasPorProduto: { produto: string; qtd: number; valorTotal: number }[];
 }
 
 export interface ChatMessage {

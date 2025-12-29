@@ -1381,6 +1381,29 @@ const App: React.FC = () => {
                      <p className="text-3xl font-black">R$ {relatorio.saldo.toFixed(2)}</p>
                   </div>
 
+                  {/* NOVO: DESEMPENHO DE PRODUTOS */}
+                  <div>
+                    <h4 className="text-xs font-black text-slate-400 uppercase border-b pb-2 mb-3">Desempenho de Produtos</h4>
+                    <div className="space-y-3">
+                      {relatorio.vendasPorProduto && relatorio.vendasPorProduto.length > 0 ? (
+                        relatorio.vendasPorProduto.map((prod, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
+                            <div className="flex items-center gap-3">
+                               <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs">{idx + 1}</div>
+                               <div>
+                                  <p className="text-xs font-black text-slate-700">{prod.produto}</p>
+                                  <p className="text-[10px] font-bold text-slate-400">{prod.qtd} unidades vendidas</p>
+                               </div>
+                            </div>
+                            <span className="text-xs font-black text-emerald-600">R$ {prod.valorTotal.toFixed(2)}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-slate-400 font-bold text-center py-4">Nenhum produto vendido neste mês.</p>
+                      )}
+                    </div>
+                  </div>
+
                   <div>
                      <h4 className="text-xs font-black text-slate-400 uppercase border-b pb-2 mb-3">Detalhamento de Entradas</h4>
                      <div className="space-y-2">
