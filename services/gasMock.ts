@@ -172,9 +172,10 @@ export const gasService = {
       });
 
       filtered.forEach(m => { 
-        if(m.tipo === 'Entrada') ent += m.valor; 
-        else if(m.tipo === 'Saída') sai += m.valor;
-        else if(m.tipo === 'A Receber') aRec += m.valor;
+        const tipo = m.tipo.trim();
+        if(tipo === 'Entrada') ent += m.valor; 
+        else if(tipo === 'Saída' || tipo === 'Saida') sai += m.valor;
+        else if(tipo === 'A Receber') aRec += m.valor;
       });
       
       return { totalEntradas: ent, totalSaidas: sai, totalAReceber: aRec, saldo: ent - sai, porMetodo: {}, recentes: filtered.slice(0, 100) }; 
@@ -186,7 +187,6 @@ export const gasService = {
     catch {
       // Mock logic: Filter current month
       const now = new Date();
-      const currentMonthStr = now.toLocaleDateString().substring(3); // aprox mm/yyyy check based on locale
       
       let ent = 0, sai = 0;
       const catsEnt: Record<string, number> = {};
@@ -194,11 +194,12 @@ export const gasService = {
 
       mockFinanceiro.forEach(m => {
         // Simple check just to simulate. In real app date format needs to be strict
-        if (true) { // Assuming all mock data is recent for demo
-           if (m.tipo === 'Entrada') {
+        if (true) { 
+           const tipo = m.tipo.trim();
+           if (tipo === 'Entrada') {
              ent += m.valor;
              catsEnt[m.categoria] = (catsEnt[m.categoria] || 0) + m.valor;
-           } else if (m.tipo === 'Saída') {
+           } else if (tipo === 'Saída' || tipo === 'Saida') {
              sai += m.valor;
              catsSai[m.categoria] = (catsSai[m.categoria] || 0) + m.valor;
            }

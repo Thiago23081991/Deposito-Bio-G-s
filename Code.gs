@@ -1,6 +1,6 @@
 
 /**
- * SISTEMA BIO GÁS PRO - BACKEND V8.3
+ * SISTEMA BIO GÁS PRO - BACKEND V8.4
  * Gestão de Cobrança, Equipe, Lançamentos e Importação
  */
 
@@ -143,7 +143,8 @@ function getResumoFinanceiro(dataIniStr, dataFimStr) {
   };
 
   const start = dataIniStr ? parseInputDate(dataIniStr) : 0;
-  const end = dataFimStr ? parseInputDate(dataFimStr) : Infinity;
+  // IMPORTANTE: Adiciona 23h 59m 59s ao filtro final para incluir o dia inteiro
+  const end = dataFimStr ? parseInputDate(dataFimStr) + 86399999 : Infinity;
 
   if (data.length > 1) {
     for (let i = 1; i < data.length; i++) {
@@ -151,15 +152,31 @@ function getResumoFinanceiro(dataIniStr, dataFimStr) {
       
       // Filtra por data (inclusivo)
       if (rowDate >= start && rowDate <= end) {
-        const tipo = data[i][2], valor = Number(data[i][4]);
-        if (tipo === 'Entrada') ent += valor;
-        else if (tipo === 'Saída') sai += valor;
-        else if (tipo === 'A Receber') arec += valor;
+        const tipoOriginal = String(data[i][2]).trim(); // Remove espaços extras
+        const valor = Number(data[i][4]);
+        
+        // Verifica Entrada
+        if (tipoOriginal === 'Entrada') {
+          ent += valor;
+        } 
+        // Verifica Saída (com ou sem acento para robustez)
+        else if (tipoOriginal === 'Saída' || tipoOriginal === 'Saida') {
+          sai += valor;
+        } 
+        // Verifica A Receber
+        else if (tipoOriginal === 'A Receber') {
+          arec += valor;
+        }
         
         recentes.push({
-          id: data[i][0], dataHora: data[i][1], tipo: tipo,
-          descricao: data[i][3], valor: valor, categoria: data[i][5], 
-          metodo: data[i][6], detalhe: data[i][7] || ''
+          id: data[i][0], 
+          dataHora: data[i][1], 
+          tipo: tipoOriginal,
+          descricao: data[i][3], 
+          valor: valor, 
+          categoria: data[i][5], 
+          metodo: data[i][6], 
+          detalhe: data[i][7] || ''
         });
       }
     }
@@ -182,14 +199,14 @@ function gerarRelatorioMensal() {
   for (let i = 1; i < data.length; i++) {
     const dataHora = String(data[i][1]); // Check if matches /MM/yyyy
     if (dataHora.includes(currentMonthStr)) {
-      const tipo = data[i][2];
+      const tipo = String(data[i][2]).trim();
       const valor = Number(data[i][4]);
       const categoria = data[i][5] || 'Geral';
       
       if (tipo === 'Entrada') {
         totalEntradas += valor;
         catsEnt[categoria] = (catsEnt[categoria] || 0) + valor;
-      } else if (tipo === 'Saída') {
+      } else if (tipo === 'Saída' || tipo === 'Saida') {
         totalSaidas += valor;
         catsSai[categoria] = (catsSai[categoria] || 0) + valor;
       }

@@ -5,6 +5,10 @@ import { Cliente, Produto, Entregador, Pedido, PaymentMethod, ResumoFinanceiro, 
 import * as XLSX from 'xlsx';
 import { GoogleGenAI } from "@google/genai";
 
+// --- CONFIGURAÇÃO DA LOGO ---
+// Substitua a URL abaixo pelo link da sua imagem ou Base64
+const LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3313/3313460.png"; 
+
 const App: React.FC = () => {
   // --- ESTADO GLOBAL ---
   const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores' | 'marketing'>('vendas');
@@ -116,8 +120,9 @@ const App: React.FC = () => {
         const data = m.dataHora.split(' ')[0];
         if (!grupos[data]) grupos[data] = { entradas: 0, saidas: 0 };
         
-        if (m.tipo === 'Entrada') grupos[data].entradas += m.valor;
-        if (m.tipo === 'Saída') grupos[data].saidas += m.valor;
+        const tipo = m.tipo.trim();
+        if (tipo === 'Entrada') grupos[data].entradas += m.valor;
+        if (tipo === 'Saída' || tipo === 'Saida') grupos[data].saidas += m.valor;
      });
 
      return Object.entries(grupos)
@@ -281,10 +286,12 @@ const App: React.FC = () => {
             .divider { border-top: 1px dashed #000; margin: 10px 0; }
             .total { font-size: 14px; font-weight: bold; text-align: right; margin-top: 5px; }
             .footer { text-align: center; margin-top: 20px; font-size: 10px; }
+            .logo-img { max-width: 100px; display: block; margin: 0 auto 10px auto; }
           </style>
         </head>
         <body>
           <div class="header">
+            <img src="${LOGO_URL}" class="logo-img" alt="Logo" />
             <div class="title">BIO GÁS PRO</div>
             <div>Entrega Rápida e Segura</div>
             <div>Recibo de Venda</div>
@@ -465,7 +472,7 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-100 font-sans">
         <div className="bg-white p-6 shadow-sm sticky top-0 z-10">
           <div className="flex justify-center mb-4">
-             <img src="https://cdn-icons-png.flaticon.com/512/3313/3313460.png" alt="Logo" className="h-12 w-12" />
+             <img src={LOGO_URL} alt="Logo" className="h-16 w-auto object-contain" />
           </div>
           <h1 className="text-center text-xl font-black text-slate-800 uppercase tracking-tight">Rastreamento</h1>
           <p className="text-center text-[10px] text-slate-400 font-bold uppercase mt-1">Pedido #{trackingPedido.id}</p>
@@ -917,19 +924,22 @@ const App: React.FC = () => {
                  </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                 {resumo?.recentes.map(m => (
+                 {resumo?.recentes.map(m => {
+                    const tipo = m.tipo.trim();
+                    const isSaida = tipo === 'Saída' || tipo === 'Saida';
+                    return (
                     <tr key={m.id} className="hover:bg-slate-50 transition-colors">
                        <td className="px-6 py-4"><input type="checkbox" checked={selectedMovimentacaoIds.includes(m.id)} onChange={() => {
                          if(selectedMovimentacaoIds.includes(m.id)) setSelectedMovimentacaoIds(prev => prev.filter(id => id !== m.id));
                          else setSelectedMovimentacaoIds(prev => [...prev, m.id]);
                        }} className="rounded text-blue-600" /></td>
                        <td className="px-6 py-4 text-[10px] font-bold text-slate-500">{m.dataHora}</td>
-                       <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-600' : m.tipo === 'Saída' ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>{m.tipo}</span></td>
+                       <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${m.tipo === 'Entrada' ? 'bg-emerald-100 text-emerald-600' : isSaida ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>{m.tipo}</span></td>
                        <td className="px-6 py-4 font-bold text-slate-800 text-xs">{m.descricao}</td>
                        <td className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase">{m.categoria}</td>
-                       <td className={`px-6 py-4 font-black text-xs ${m.tipo === 'Entrada' ? 'text-emerald-600' : m.tipo === 'Saída' ? 'text-rose-600' : 'text-slate-400'}`}>R$ {m.valor.toFixed(2)}</td>
+                       <td className={`px-6 py-4 font-black text-xs ${m.tipo === 'Entrada' ? 'text-emerald-600' : isSaida ? 'text-rose-600' : 'text-slate-400'}`}>R$ {m.valor.toFixed(2)}</td>
                     </tr>
-                 ))}
+                 )})}
                  {(!resumo?.recentes || resumo.recentes.length === 0) && (
                     <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold text-xs uppercase">Nenhuma movimentação no período</td></tr>
                  )}
@@ -1082,9 +1092,8 @@ const App: React.FC = () => {
       {/* SIDEBAR NAVIGATION */}
       <aside className="w-20 lg:w-64 bg-white border-r border-slate-200 fixed h-full z-20 hidden md:flex flex-col justify-between transition-all">
          <div>
-            <div className="h-24 flex items-center justify-center border-b border-slate-100">
-               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-lg shadow-blue-200">B</div>
-               <span className="ml-3 font-black text-xl text-slate-800 tracking-tight hidden lg:block">Bio Gás</span>
+            <div className="h-24 flex items-center justify-center border-b border-slate-100 p-4">
+               <img src={LOGO_URL} alt="Bio Gás" className="max-h-16 w-auto object-contain" />
             </div>
             <nav className="p-4 space-y-2">
                {[
@@ -1132,10 +1141,7 @@ const App: React.FC = () => {
       <main className="flex-1 md:ml-20 lg:ml-64 p-6 lg:p-10 mb-20 md:mb-0">
          {/* HEADER MOBILE */}
          <div className="md:hidden flex justify-between items-center mb-6">
-            <div className="flex items-center gap-2">
-               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-black">B</div>
-               <span className="font-black text-slate-800">Bio Gás PRO</span>
-            </div>
+            <img src={LOGO_URL} alt="Bio Gás" className="h-10 w-auto object-contain" />
          </div>
 
          {/* MESSAGE TOAST */}
@@ -1277,9 +1283,18 @@ const App: React.FC = () => {
             <h3 className="text-xl font-black text-slate-800 uppercase mb-6">Novo Lançamento</h3>
             <div className="space-y-4">
               <div className="flex bg-slate-100 p-1 rounded-xl">
-                 {['Entrada', 'Saída'].map(t => (
-                    <button key={t} onClick={() => setMovimentacaoForm({...movimentacaoForm, tipo: t})} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition ${movimentacaoForm.tipo === t ? (t === 'Entrada' ? 'bg-emerald-500 text-white shadow-lg' : 'bg-rose-500 text-white shadow-lg') : 'text-slate-400'}`}>{t}</button>
-                 ))}
+                 <button 
+                   onClick={() => setMovimentacaoForm({...movimentacaoForm, tipo: 'Entrada'})} 
+                   className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition ${movimentacaoForm.tipo === 'Entrada' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-200'}`}
+                 >
+                   Entrada
+                 </button>
+                 <button 
+                   onClick={() => setMovimentacaoForm({...movimentacaoForm, tipo: 'Saída'})} 
+                   className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition ${movimentacaoForm.tipo === 'Saída' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-200'}`}
+                 >
+                   Saída
+                 </button>
               </div>
               <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Descrição (Ex: Conta de Luz)" value={movimentacaoForm.descricao} onChange={e => setMovimentacaoForm({...movimentacaoForm, descricao: e.target.value})} />
               <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Valor (R$)" type="number" value={movimentacaoForm.valor} onChange={e => setMovimentacaoForm({...movimentacaoForm, valor: e.target.value})} />
