@@ -1297,7 +1297,7 @@ const App: React.FC = () => {
                  </button>
               </div>
               <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Descrição (Ex: Conta de Luz)" value={movimentacaoForm.descricao} onChange={e => setMovimentacaoForm({...movimentacaoForm, descricao: e.target.value})} />
-              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Valor (R$)" type="number" value={movimentacaoForm.valor} onChange={e => setMovimentacaoForm({...movimentacaoForm, valor: e.target.value})} />
+              <input className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" placeholder="Valor (R$)" type="number" step="0.01" value={movimentacaoForm.valor} onChange={e => setMovimentacaoForm({...movimentacaoForm, valor: e.target.value})} />
               <select className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-sm" value={movimentacaoForm.categoria} onChange={e => setMovimentacaoForm({...movimentacaoForm, categoria: e.target.value})}>
                  <option value="Geral">Geral</option>
                  <option value="Vendas">Vendas</option>
@@ -1310,9 +1310,19 @@ const App: React.FC = () => {
                 <button onClick={() => setShowFinanceiroModal(false)} className="py-3 bg-slate-100 text-slate-500 font-black rounded-xl text-xs uppercase hover:bg-slate-200">Cancelar</button>
                 <button onClick={async () => {
                    if(!movimentacaoForm.descricao || !movimentacaoForm.valor) return;
+                   
+                   // CORREÇÃO: Substitui vírgula por ponto para evitar NaN em conversões
+                   const valorStr = String(movimentacaoForm.valor).replace(',', '.');
+                   const valorFloat = parseFloat(valorStr);
+
+                   if(isNaN(valorFloat) || valorFloat <= 0) {
+                      alert('Por favor, insira um valor válido (use ponto ou vírgula).');
+                      return;
+                   }
+
                    setLoading(true);
                    try {
-                      await gasService.registrarMovimentacao(movimentacaoForm.tipo, Number(movimentacaoForm.valor), movimentacaoForm.descricao, movimentacaoForm.categoria, 'Manual', 'Lançamento Manual App');
+                      await gasService.registrarMovimentacao(movimentacaoForm.tipo, valorFloat, movimentacaoForm.descricao, movimentacaoForm.categoria, 'Manual', 'Lançamento Manual App');
                       setShowFinanceiroModal(false);
                       await loadData(true);
                       setMessage({ type: 'success', text: 'Lançamento registrado!' });
