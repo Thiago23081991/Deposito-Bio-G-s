@@ -1,6 +1,6 @@
 
 /**
- * SISTEMA BIO GÁS PRO - BACKEND V8.4
+ * SISTEMA BIO GÁS PRO - BACKEND V8.5
  * Gestão de Cobrança, Equipe, Lançamentos e Importação
  */
 
@@ -119,6 +119,7 @@ function registrarMovimentacao(tipo, valor, descricao, categoria, metodo = '-', 
   const sheet = getSheet('Financeiro');
   const timestamp = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy HH:mm");
   const id = "FIN-" + Date.now();
+  // Garante que o valor é salvo como número puro
   sheet.appendRow([id, timestamp, tipo, descricao, Number(valor), categoria, metodo, detalhe]);
   return true;
 }
@@ -127,23 +128,29 @@ function getResumoFinanceiro(dataIniStr, dataFimStr) {
   const data = getSheet('Financeiro').getDataRange().getValues();
   let ent = 0, sai = 0, arec = 0, recentes = [];
 
-  // Converte string 'yyyy-MM-dd' para timestamp
+  // Parse do input de filtro (YYYY-MM-DD)
   const parseInputDate = (str) => {
      if (!str) return null;
      const parts = str.split('-');
      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
   };
 
-  const parseRowDate = (str) => {
-     if (!str) return 0;
-     // Esperado: dd/MM/yyyy HH:mm
+  // Parse robusto da data da linha (pode ser String ou Date Object)
+  const parseRowDate = (val) => {
+     if (!val) return 0;
+     // Se o Google Sheets retornar um objeto Date nativo
+     if (val instanceof Date) {
+       return val.getTime();
+     }
+     // Se retornar string "dd/MM/yyyy HH:mm"
+     const str = String(val);
      const parts = str.split(' ')[0].split('/');
      if(parts.length < 3) return 0;
      return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
   };
 
   const start = dataIniStr ? parseInputDate(dataIniStr) : 0;
-  // IMPORTANTE: Adiciona 23h 59m 59s ao filtro final para incluir o dia inteiro
+  // Adiciona 23h 59m 59s ao filtro final
   const end = dataFimStr ? parseInputDate(dataFimStr) + 86399999 : Infinity;
 
   if (data.length > 1) {
@@ -152,14 +159,20 @@ function getResumoFinanceiro(dataIniStr, dataFimStr) {
       
       // Filtra por data (inclusivo)
       if (rowDate >= start && rowDate <= end) {
-        const tipoOriginal = String(data[i][2]).trim(); // Remove espaços extras
-        const valor = Number(data[i][4]);
+        const tipoOriginal = String(data[i][2]).trim();
+        
+        // Garante que o valor é numérico, tratando vírgula se necessário
+        let valorRaw = data[i][4];
+        if (typeof valorRaw === 'string') {
+          valorRaw = valorRaw.replace('R$', '').replace('.', '').replace(',', '.').trim();
+        }
+        const valor = Number(valorRaw) || 0;
         
         // Verifica Entrada
         if (tipoOriginal === 'Entrada') {
           ent += valor;
         } 
-        // Verifica Saída (com ou sem acento para robustez)
+        // Verifica Saída (com ou sem acento)
         else if (tipoOriginal === 'Saída' || tipoOriginal === 'Saida') {
           sai += valor;
         } 
@@ -168,9 +181,15 @@ function getResumoFinanceiro(dataIniStr, dataFimStr) {
           arec += valor;
         }
         
+        // Formata data para exibição se for objeto Date
+        let dataDisplay = data[i][1];
+        if (dataDisplay instanceof Date) {
+          dataDisplay = Utilities.formatDate(dataDisplay, "GMT-3", "dd/MM/yyyy HH:mm");
+        }
+
         recentes.push({
           id: data[i][0], 
-          dataHora: data[i][1], 
+          dataHora: dataDisplay, 
           tipo: tipoOriginal,
           descricao: data[i][3], 
           valor: valor, 
@@ -188,19 +207,32 @@ function gerarRelatorioMensal() {
   const sheet = getSheet('Financeiro');
   const data = sheet.getDataRange().getValues();
   const now = new Date();
-  const currentMonthStr = Utilities.formatDate(now, "GMT-3", "/MM/yyyy"); // Busca o mês atual
+  const currentMonthStr = Utilities.formatDate(now, "GMT-3", "/MM/yyyy"); 
   
   let totalEntradas = 0;
   let totalSaidas = 0;
   const catsEnt = {};
   const catsSai = {};
   
-  // 1. Processamento Financeiro
   for (let i = 1; i < data.length; i++) {
-    const dataHora = String(data[i][1]); 
-    if (dataHora.includes(currentMonthStr)) {
+    // Tratamento de data robusto
+    let dataHoraStr = "";
+    if (data[i][1] instanceof Date) {
+       dataHoraStr = Utilities.formatDate(data[i][1], "GMT-3", "dd/MM/yyyy HH:mm");
+    } else {
+       dataHoraStr = String(data[i][1]);
+    }
+
+    if (dataHoraStr.includes(currentMonthStr)) {
       const tipo = String(data[i][2]).trim();
-      const valor = Number(data[i][4]);
+      
+      // Tratamento numérico robusto
+      let valorRaw = data[i][4];
+      if (typeof valorRaw === 'string') {
+         valorRaw = valorRaw.replace('R$', '').replace('.', '').replace(',', '.').trim();
+      }
+      const valor = Number(valorRaw) || 0;
+
       const categoria = data[i][5] || 'Geral';
       
       if (tipo === 'Entrada') {
@@ -215,13 +247,12 @@ function gerarRelatorioMensal() {
   
   const mapCats = (obj) => Object.keys(obj).map(k => ({ categoria: k, valor: obj[k] }));
 
-  // 2. Processamento de Produtos (Pedidos)
+  // Processamento de Produtos
   const sheetPedidos = getSheet('Pedidos');
   const dataPedidos = sheetPedidos.getDataRange().getValues();
   const sheetProdutos = getSheet('Produtos');
   const dataProdutos = sheetProdutos.getDataRange().getValues();
   
-  // Mapa de Preços dos Produtos (Nome -> Preço Atual)
   const mapPrecos = {};
   for(let i=1; i<dataProdutos.length; i++){
     mapPrecos[String(dataProdutos[i][1]).trim()] = Number(dataProdutos[i][2]);
@@ -230,27 +261,28 @@ function gerarRelatorioMensal() {
   const statsProdutos = {};
 
   for (let i = 1; i < dataPedidos.length; i++) {
-    const dataHoraPedido = String(dataPedidos[i][1]);
-    const status = String(dataPedidos[i][8]); // Status (Coluna I)
+    let dataHoraPedido = "";
+    if (dataPedidos[i][1] instanceof Date) {
+       dataHoraPedido = Utilities.formatDate(dataPedidos[i][1], "GMT-3", "dd/MM/yyyy HH:mm");
+    } else {
+       dataHoraPedido = String(dataPedidos[i][1]);
+    }
 
-    // Filtra pelo mês atual e apenas pedidos Entregues (Vendas confirmadas)
+    const status = String(dataPedidos[i][8]); 
+
     if (dataHoraPedido.includes(currentMonthStr) && status === 'Entregue') {
-      const itensStr = String(dataPedidos[i][5]); // Coluna F: "2x Gás, 1x Água"
+      const itensStr = String(dataPedidos[i][5]);
       if(itensStr){
         const itensArr = itensStr.split(',');
         itensArr.forEach(item => {
-          // Parse: "2x Nome do Produto"
           const parts = item.trim().split('x ');
           if(parts.length >= 2){
             const qtd = Number(parts[0]);
             const nomeProd = parts[1].trim();
-            
             if(!statsProdutos[nomeProd]) {
               statsProdutos[nomeProd] = { qtd: 0, valorTotal: 0 };
             }
-            
             statsProdutos[nomeProd].qtd += qtd;
-            // Valor Estimado = Qtd * Preço Atual (ja que o historico individual nao esta na string)
             const precoUnit = mapPrecos[nomeProd] || 0;
             statsProdutos[nomeProd].valorTotal += (qtd * precoUnit);
           }
@@ -263,7 +295,7 @@ function gerarRelatorioMensal() {
     produto: k,
     qtd: statsProdutos[k].qtd,
     valorTotal: statsProdutos[k].valorTotal
-  })).sort((a,b) => b.valorTotal - a.valorTotal); // Ordena por maior valor
+  })).sort((a,b) => b.valorTotal - a.valorTotal);
   
   return {
     mes: Utilities.formatDate(now, "GMT-3", "MMMM/yyyy"),
