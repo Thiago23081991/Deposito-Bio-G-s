@@ -11,6 +11,9 @@ const LOGO_URL = "/logo.png";
 
 const App: React.FC = () => {
   // --- ESTADO GLOBAL ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPass, setLoginPass] = useState('');
   const [activeTab, setActiveTab] = useState<'vendas' | 'caixa' | 'cobranca' | 'estoque' | 'clientes' | 'entregadores' | 'marketing'>('vendas');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -439,6 +442,61 @@ const App: React.FC = () => {
   };
 
   // --- RENDERS ---
+
+  // RENDER: LOGIN SCREEN (If not authenticated and not tracking)
+  if (!isAuthenticated && !isTrackingMode) {
+    const handleLogin = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (loginUser === 'Admin' && loginPass === 'admin') {
+        setIsAuthenticated(true);
+        setMessage({ type: 'success', text: 'Bem-vindo de volta, Admin!' });
+      } else {
+        setMessage({ type: 'error', text: 'Usuário ou senha incorretos.' });
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-sm space-y-6">
+          <div className="flex flex-col items-center">
+            <img src={LOGO_URL} alt="Logo" className="h-20 w-auto mb-4 object-contain" />
+            <h1 className="text-2xl font-black text-slate-800 uppercase">Acesso Restrito</h1>
+            <p className="text-xs font-bold text-slate-400 uppercase">Bio Gás PRO</p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Usuário</label>
+              <input
+                type="text"
+                className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold text-slate-800 outline-none transition-all"
+                placeholder="Digite seu usuário..."
+                value={loginUser}
+                onChange={e => setLoginUser(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Senha</label>
+              <input
+                type="password"
+                className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold text-slate-800 outline-none transition-all"
+                placeholder="******"
+                value={loginPass}
+                onChange={e => setLoginPass(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 transition transform hover:scale-[1.02]">
+              Entrar no Sistema
+            </button>
+          </form>
+          {message && (
+            <div className={`p-4 rounded-xl text-center text-xs font-bold ${message.type === 'error' ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-600'}`}>
+              {message.text}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // RENDER: TRACKING VIEW (CLIENT)
   if (isTrackingMode) {
