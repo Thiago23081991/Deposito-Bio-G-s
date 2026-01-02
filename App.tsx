@@ -181,7 +181,7 @@ const App: React.FC = () => {
     setIsGenerating(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
       const systemContext = `
         Você é um especialista em Marketing Digital para uma distribuidora de Gás e Água chamada "Bio Gás PRO".
