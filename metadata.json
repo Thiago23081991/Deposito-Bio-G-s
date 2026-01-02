@@ -1,0 +1,7 @@
+{
+  "name": "Bio Gás PRO - Gestão Inteligente",
+  "description": "Sistema de gestão de pedidos de gás com automação de rotas via WhatsApp e baixa manual de pagamentos.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
